@@ -93,15 +93,19 @@ instance reachableSubgameAt_isEmpty_decidable (G : ExtensiveGame iota U)
 
 /-! ### Behavior strategies -/
 
-/-- A behavior strategy for player `i`: at every state controlled by `i`, choose
-    a probability distribution over the actions available at that state.
+/-- A behavior strategy for player `i`: at every nonterminal state controlled
+by `i`, choose a probability distribution over the actions available there.
 
 This is a state-based primitive.  A later imperfect-information layer can impose
 the usual information-set consistency condition by requiring equal
-distributions across states in the same information set. -/
+distributions across states in the same information set.
+
+The nonterminal premise prevents a semantically ignored terminal mover label
+from creating an impossible simplex coordinate over an empty action type. -/
 def BehaviorStrategy (G : ExtensiveGame iota U) (i : iota)
     [(s : G.State) -> Fintype (G.Action s)] : Type _ :=
-  (s : G.State) -> G.mover s = some i -> stdSimplex Real (G.Action s)
+  (s : G.State) -> G.mover s = some i ->
+    ¬ G.isTerminal s -> stdSimplex Real (G.Action s)
 
 /-- A behavior-strategy profile: one behavior strategy for every player. -/
 def BehaviorProfile (G : ExtensiveGame iota U)
@@ -122,8 +126,9 @@ used by the current Arena-based behavior-strategy API. -/
 def IsCompletelyMixed {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {i : iota}
     (beta : G.BehaviorStrategy i) : Prop :=
-  forall (s : G.State) (h : G.mover s = some i) (a : G.Action s),
-    0 < (beta s h).val a
+  forall (s : G.State) (h : G.mover s = some i)
+    (hnonterminal : ¬ G.isTerminal s) (a : G.Action s),
+    0 < (beta s h hnonterminal).val a
 
 end BehaviorStrategy
 
@@ -151,7 +156,7 @@ theorem IsCompletelyMixed.player {G : ExtensiveGame iota U}
 def probAt {G : ExtensiveGame iota U} [(s : G.State) -> Fintype (G.Action s)]
     (beta : G.BehaviorProfile)
     {s : G.State} {i : iota} (h : G.mover s = some i) (a : G.Action s) : Real :=
-  (beta i s h).val a
+  (beta i s h (fun hterminal => hterminal.false a)).val a
 
 /-- The action probability induced by a behavior profile at a state.
 
@@ -162,7 +167,8 @@ later stochastic layer. -/
 def actionProb {G : ExtensiveGame iota U} [(s : G.State) -> Fintype (G.Action s)]
     (beta : G.BehaviorProfile) (s : G.State) (a : G.Action s) : Real :=
   match h : G.mover s with
-  | some i => (beta i s h).val a
+  | some i =>
+      (beta i s h (fun hterminal => hterminal.false a)).val a
   | none => 0
 
 /-- A behavior profile assigns nonnegative probability to every action. -/
@@ -173,7 +179,9 @@ theorem actionProb_nonneg {G : ExtensiveGame iota U}
   unfold actionProb
   split
   · rename_i i hm
-    exact (beta i s hm).property.1 a
+    exact
+      (beta i s hm
+        (fun hterminal => hterminal.false a)).property.1 a
   · norm_num
 
 /-- At player-controlled states, a completely mixed behavior profile gives
@@ -186,7 +194,7 @@ theorem IsCompletelyMixed.actionProb_pos {G : ExtensiveGame iota U}
   unfold actionProb
   split
   · rename_i j hs
-    exact hbeta j s hs a
+    exact hbeta j s hs (fun hterminal => hterminal.false a) a
   · rename_i hs
     rw [hm] at hs
     cases hs
@@ -229,13 +237,13 @@ def restrictSubgame {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {i : iota}
     (beta : G.BehaviorStrategy i) (root : G.State) :
     (G.subgameAt root).BehaviorStrategy i :=
-  fun s h => beta s h
+  fun s h hnonterminal => beta s h hnonterminal
 
 theorem restrictSubgame_eq_self {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {i : iota}
     (beta : G.BehaviorStrategy i) (root : G.State) :
     beta.restrictSubgame root = beta := by
-  funext s h
+  funext s h hnonterminal
   rfl
 
 /-- View a behavior strategy for a subgame as a behavior strategy for the
@@ -246,13 +254,13 @@ movers; it only changes the initial state. -/
 def liftSubgame {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {i : iota} {root : G.State}
     (beta : (G.subgameAt root).BehaviorStrategy i) : G.BehaviorStrategy i :=
-  fun s h => beta s h
+  fun s h hnonterminal => beta s h hnonterminal
 
 theorem liftSubgame_eq_self {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {i : iota} {root : G.State}
     (beta : (G.subgameAt root).BehaviorStrategy i) :
     beta.liftSubgame = beta := by
-  funext s h
+  funext s h hnonterminal
   rfl
 
 @[simp]
@@ -260,7 +268,7 @@ theorem restrictSubgame_liftSubgame {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {i : iota} {root : G.State}
     (beta : (G.subgameAt root).BehaviorStrategy i) :
     beta.liftSubgame.restrictSubgame root = beta := by
-  funext s h
+  funext s h hnonterminal
   rfl
 
 /-! ### Reachable-state subgame restriction -/
@@ -271,7 +279,7 @@ def restrictReachableSubgame {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {i : iota}
     (beta : G.BehaviorStrategy i) (root : G.State) :
     (G.reachableSubgameAt root).BehaviorStrategy i :=
-  fun s h => beta s.1 h
+  fun s h hnonterminal => beta s.1 h hnonterminal
 
 /-- Lift a reachable-subgame behavior strategy to the original game, preserving
 the baseline strategy outside the reachable subgame. -/
@@ -281,11 +289,11 @@ def liftReachableSubgame {G : ExtensiveGame iota U}
     (base : G.BehaviorStrategy i)
     (beta : (G.reachableSubgameAt root).BehaviorStrategy i) :
     G.BehaviorStrategy i :=
-  fun s h =>
+  fun s h hnonterminal =>
     if hs : Arena.Reachable G.toArena root s then
-      beta ⟨s, hs⟩ h
+      beta ⟨s, hs⟩ h hnonterminal
     else
-      base s h
+      base s h hnonterminal
 
 @[simp]
 theorem restrictReachableSubgame_liftReachableSubgame
@@ -295,7 +303,7 @@ theorem restrictReachableSubgame_liftReachableSubgame
     (base : G.BehaviorStrategy i)
     (beta : (G.reachableSubgameAt root).BehaviorStrategy i) :
     (base.liftReachableSubgame beta).restrictReachableSubgame root = beta := by
-  funext s h
+  funext s h hnonterminal
   cases s with
   | mk state hstate =>
       simp [restrictReachableSubgame, liftReachableSubgame, hstate]
@@ -315,7 +323,7 @@ theorem restrictSubgame_eq_self {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)]
     (beta : G.BehaviorProfile) (root : G.State) :
     beta.restrictSubgame root = beta := by
-  funext i s h
+  funext i s h hnonterminal
   rfl
 
 /-- View a behavior profile for a subgame as a behavior profile for the original
@@ -330,7 +338,7 @@ theorem restrictSubgame_liftSubgame {G : ExtensiveGame iota U}
     [(s : G.State) -> Fintype (G.Action s)] {root : G.State}
     (beta : (G.subgameAt root).BehaviorProfile) :
     beta.liftSubgame.restrictSubgame root = beta := by
-  funext i s h
+  funext i s h hnonterminal
   rfl
 
 /-- Restrict a behavior profile to the subtype subgame of states reachable from
@@ -359,7 +367,7 @@ theorem restrictReachableSubgame_liftReachableSubgame
     (base : G.BehaviorProfile)
     (beta : (G.reachableSubgameAt root).BehaviorProfile) :
     (base.liftReachableSubgame beta).restrictReachableSubgame root = beta := by
-  funext i s h
+  funext i s h hnonterminal
   simp [restrictReachableSubgame, liftReachableSubgame]
 
 /-- A reachable-subgame deviation can be lifted to an original-game deviation
@@ -373,7 +381,7 @@ theorem restrictReachableSubgame_deviate_liftReachableSubgame
     (beta' : (G.reachableSubgameAt root).BehaviorStrategy who) :
     (beta.deviate who ((beta who).liftReachableSubgame beta')).restrictReachableSubgame root =
       (beta.restrictReachableSubgame root).deviate who beta' := by
-  funext i s h
+  funext i s h hnonterminal
   by_cases hi : i = who
   · subst hi
     simp [restrictReachableSubgame]
@@ -396,7 +404,7 @@ theorem restrictSubgame_deviate {G : ExtensiveGame iota U}
     (root : G.State) :
     (beta.deviate who beta').restrictSubgame root =
       (beta.restrictSubgame root).deviate who (beta'.restrictSubgame root) := by
-  funext i s h
+  funext i s h hnonterminal
   by_cases hi : i = who
   · subst hi
     simp [restrictSubgame, BehaviorStrategy.restrictSubgame]

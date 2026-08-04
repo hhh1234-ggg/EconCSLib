@@ -6,6 +6,12 @@ Released under Apache 2.0 license as described in the file LICENSE.
 import EconCSLib.Examples.CandidateChoice
 import EconCSLib.Examples.CentipedeGame
 import EconCSLib.Examples.EntryDeterrence
+import EconCSLib.Examples.ExtensiveGame.CompletePlayBoundary
+import EconCSLib.Examples.ExtensiveGame.HistoryDiamond
+import EconCSLib.Examples.ExtensiveGame.LegacyApiMigration
+import EconCSLib.Examples.ExtensiveGame.ObservedInfoRealization
+import EconCSLib.Examples.ExtensiveGame.StructuralCoreImportBoundary
+import EconCSLib.Examples.ExtensiveGame.TerminalMoverIgnored
 import EconCSLib.Examples.MatchingPennies
 import EconCSLib.Examples.PrisonersDilemma
 import EconCSLib.Examples.RockPaperScissors
