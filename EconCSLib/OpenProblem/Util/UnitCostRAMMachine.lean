@@ -495,7 +495,85 @@ representation is fixed before the finite program is exhibited, the time
 majorant is an explicit polynomial, and the bound is imposed on the actual
 interpreter trace.  Fixing the encodings prevents a purported implementation
 from hiding the mathematical computation in a witness-specific decoder.
+
+The API is deliberately split into two layers.  A
+`FixedEncodingRAMImplementation` first identifies the exact execution and its
+operation-count function.  The separate predicate
+`FixedEncodingRAMImplementation.IsPolynomialTime` then asks for a Mathlib
+polynomial majorant.  `StrictRAMComputableInPolyTime` below bundles both layers
+for concise use in problem statements.
 -/
+
+/-- Step 1: a finite closed RAM program computing a mathematical function
+with fixed input/output representations.  This structure records the exact
+execution to be counted but makes no asymptotic claim. -/
+structure FixedEncodingRAMImplementation
+    {Input : Type u} {Output : Input → Type v}
+    (inputEncoding : Encoding Input)
+    (outputEncoding : DependentEncoding Output)
+    (function : (input : Input) → Output input) where
+  program : Program Empty
+  fuel : Input → ℕ
+  correct : ∀ input,
+    ∃ finalState,
+      (run (closedEnvironment fun _ ↦ false) program (fuel input)
+          (inputEncoding.encode input)).ret =
+        .halted (outputEncoding.encode input (function input)) finalState
+
+namespace FixedEncodingRAMImplementation
+
+variable {Input : Type u} {Output : Input → Type v}
+  {inputEncoding : Encoding Input}
+  {outputEncoding : DependentEncoding Output}
+  {function : (input : Input) → Output input}
+
+/-- The instruction-enforced execution whose cost is used by every later
+resource predicate. -/
+def execution
+    (implementation : FixedEncodingRAMImplementation
+      inputEncoding outputEncoding function)
+    (input : Input) : ProfiledCost ExecutionResult :=
+  run (closedEnvironment fun _ ↦ false) implementation.program
+    (implementation.fuel input) (inputEncoding.encode input)
+
+/-- Step 1 output: the exact number of local RAM steps charged by the
+interpreter on one input. -/
+def operationCount
+    (implementation : FixedEncodingRAMImplementation
+      inputEncoding outputEncoding function)
+    (input : Input) : ℕ :=
+  ProfiledCost.steps (implementation.execution input)
+
+/-- Step 2: the counted execution has a natural-coefficient polynomial
+majorant in the length of the fixed input encoding. -/
+def IsPolynomialTime
+    (implementation : FixedEncodingRAMImplementation
+      inputEncoding outputEncoding function) : Prop :=
+  ∃ time : Polynomial ℕ, ∀ input,
+    implementation.operationCount input ≤
+      time.eval (inputEncoding.size input)
+
+/-- Generic step-2 predicate for any natural-valued statistic extracted from
+the same execution.  It covers time, oracle calls, samples, random bits,
+communication, output delay, and space without introducing a new complexity
+definition for each resource. -/
+def HasPolynomialResource
+    (implementation : FixedEncodingRAMImplementation
+      inputEncoding outputEncoding function)
+    (resource : Input → ProfiledCost ExecutionResult → ℕ) : Prop :=
+  ∃ bound : Polynomial ℕ, ∀ input,
+    resource input (implementation.execution input) ≤
+      bound.eval (inputEncoding.size input)
+
+theorem isPolynomialTime_iff_stepsResource
+    (implementation : FixedEncodingRAMImplementation
+      inputEncoding outputEncoding function) :
+    implementation.IsPolynomialTime ↔
+      implementation.HasPolynomialResource
+        (fun _ execution ↦ ProfiledCost.steps execution) :=
+  Iff.rfl
+
+end FixedEncodingRAMImplementation
 
 /-- A finite closed real-RAM program computing `function` in time bounded by
 an explicit natural-coefficient polynomial in a *fixed* lossless input
@@ -526,6 +604,135 @@ structure StrictRAMComputableInPolyTime
         (run (closedEnvironment fun _ => false) program (fuel input)
           (inputEncoding.encode input)) ≤
       time.eval (inputEncoding.size input)
+
+namespace StrictRAMComputableInPolyTime
+
+variable {Input : Type u} {Output : Input → Type v}
+  {inputEncoding : Encoding Input}
+  {outputEncoding : DependentEncoding Output}
+  {function : (input : Input) → Output input}
+
+/-- Forget only the polynomial certificate while retaining the exact program,
+canonical correctness statement, and execution to be counted. -/
+def toImplementation
+    (certificate : StrictRAMComputableInPolyTime
+      inputEncoding outputEncoding function) :
+    FixedEncodingRAMImplementation inputEncoding outputEncoding function where
+  program := certificate.program
+  fuel := certificate.fuel
+  correct := certificate.correct
+
+theorem toImplementation_isPolynomialTime
+    (certificate : StrictRAMComputableInPolyTime
+      inputEncoding outputEncoding function) :
+    certificate.toImplementation.IsPolynomialTime :=
+  ⟨certificate.time, certificate.time_bound⟩
+
+end StrictRAMComputableInPolyTime
+
+/-- The bundled strict certificate is exactly the combination of an exact
+fixed-encoding implementation and the separate polynomial-majorant property. -/
+theorem nonempty_strictRAMComputableInPolyTime_iff
+    {Input : Type u} {Output : Input → Type v}
+    (inputEncoding : Encoding Input)
+    (outputEncoding : DependentEncoding Output)
+    (function : (input : Input) → Output input) :
+    Nonempty (StrictRAMComputableInPolyTime
+      inputEncoding outputEncoding function) ↔
+      ∃ implementation : FixedEncodingRAMImplementation
+        inputEncoding outputEncoding function,
+        implementation.IsPolynomialTime := by
+  constructor
+  · rintro ⟨certificate⟩
+    exact ⟨certificate.toImplementation,
+      certificate.toImplementation_isPolynomialTime⟩
+  · rintro ⟨implementation, time, timeBound⟩
+    exact ⟨{
+      program := implementation.program
+      fuel := implementation.fuel
+      time := time
+      correct := implementation.correct
+      time_bound := timeBound }⟩
+
+/-- Step 1 for randomized, oracle, sampling, and adversarial executions: the
+external-operation type, environment, and encodings are fixed outside the
+implementation, while one finite program must work for every choice. -/
+structure FixedEnvironmentRAMImplementation
+    {Input : Type u} {Choice : Input → Type v}
+    {Output : (input : Input) → Choice input → Type w}
+    (inputEncoding : Encoding Input)
+    (outputEncoding : ChoiceDependentEncoding Output)
+    (ExternalOperation : Type*)
+    (environment : (input : Input) →
+      Choice input → MachineEnvironment ExternalOperation)
+    (function : (input : Input) →
+      (choice : Choice input) → Output input choice) where
+  choice_nonempty : ∀ input, Nonempty (Choice input)
+  program : Program ExternalOperation
+  fuel : (input : Input) → Choice input → ℕ
+  correct : ∀ input choice,
+    ∃ finalState,
+      (run (environment input choice) program (fuel input choice)
+          (inputEncoding.encode input)).ret =
+        .halted
+          (outputEncoding.encode input choice (function input choice))
+          finalState
+
+namespace FixedEnvironmentRAMImplementation
+
+variable {Input : Type u} {Choice : Input → Type v}
+  {Output : (input : Input) → Choice input → Type w}
+  {inputEncoding : Encoding Input}
+  {outputEncoding : ChoiceDependentEncoding Output}
+  {ExternalOperation : Type*}
+  {environment : (input : Input) →
+    Choice input → MachineEnvironment ExternalOperation}
+  {function : (input : Input) →
+    (choice : Choice input) → Output input choice}
+
+def execution
+    (implementation : FixedEnvironmentRAMImplementation inputEncoding
+      outputEncoding ExternalOperation environment function)
+    (input : Input) (choice : Choice input) : ProfiledCost ExecutionResult :=
+  run (environment input choice) implementation.program
+    (implementation.fuel input choice) (inputEncoding.encode input)
+
+/-- Exact step count of one selected execution. -/
+def operationCount
+    (implementation : FixedEnvironmentRAMImplementation inputEncoding
+      outputEncoding ExternalOperation environment function)
+    (input : Input) (choice : Choice input) : ℕ :=
+  ProfiledCost.steps (implementation.execution input choice)
+
+/-- Step 2 requires one polynomial uniformly over every legal execution
+choice. -/
+def IsPolynomialTime
+    (implementation : FixedEnvironmentRAMImplementation inputEncoding
+      outputEncoding ExternalOperation environment function) : Prop :=
+  ∃ time : Polynomial ℕ, ∀ input choice,
+    implementation.operationCount input choice ≤
+      time.eval (inputEncoding.size input)
+
+/-- Uniform polynomial bound for an arbitrary statistic of the exact chosen
+execution. -/
+def HasPolynomialResource
+    (implementation : FixedEnvironmentRAMImplementation inputEncoding
+      outputEncoding ExternalOperation environment function)
+    (resource : (input : Input) → Choice input →
+      ProfiledCost ExecutionResult → ℕ) : Prop :=
+  ∃ bound : Polynomial ℕ, ∀ input choice,
+    resource input choice (implementation.execution input choice) ≤
+      bound.eval (inputEncoding.size input)
+
+theorem isPolynomialTime_iff_stepsResource
+    (implementation : FixedEnvironmentRAMImplementation inputEncoding
+      outputEncoding ExternalOperation environment function) :
+    implementation.IsPolynomialTime ↔
+      implementation.HasPolynomialResource
+        (fun _ _ execution ↦ ProfiledCost.steps execution) :=
+  Iff.rfl
+
+end FixedEnvironmentRAMImplementation
 
 /-- Preferred choice/oracle certificate with the external-operation type and
 semantics fixed by the surrounding problem statement.  Keeping `environment`
@@ -565,6 +772,71 @@ structure StrictRAMComputableInPolyTimeWithFixedEnvironment
           (inputEncoding.encode input)) ≤
       time.eval (inputEncoding.size input)
 
+/-- Step-1 implementation for a promise search problem.  The interpreter
+chooses an encoded solution, while `correct` connects that exact output to the
+search relation on valid inputs. -/
+structure FixedEncodingRAMSearchImplementation
+    {Input : Type u} {Output : Input → Type v}
+    (inputEncoding : Encoding Input)
+    (outputEncoding : DependentEncoding Output)
+    (valid : Input → Prop)
+    (solution : (input : Input) → Output input → Prop) where
+  program : Program Empty
+  fuel : Input → ℕ
+  correct : ∀ input, valid input →
+    ∃ output finalState,
+      (run (closedEnvironment fun _ ↦ false) program (fuel input)
+          (inputEncoding.encode input)).ret =
+        .halted (outputEncoding.encode input output) finalState ∧
+      solution input output
+
+namespace FixedEncodingRAMSearchImplementation
+
+variable {Input : Type u} {Output : Input → Type v}
+  {inputEncoding : Encoding Input}
+  {outputEncoding : DependentEncoding Output}
+  {valid : Input → Prop}
+  {solution : (input : Input) → Output input → Prop}
+
+def execution
+    (implementation : FixedEncodingRAMSearchImplementation
+      inputEncoding outputEncoding valid solution)
+    (input : Input) : ProfiledCost ExecutionResult :=
+  run (closedEnvironment fun _ ↦ false) implementation.program
+    (implementation.fuel input) (inputEncoding.encode input)
+
+def operationCount
+    (implementation : FixedEncodingRAMSearchImplementation
+      inputEncoding outputEncoding valid solution)
+    (input : Input) : ℕ :=
+  ProfiledCost.steps (implementation.execution input)
+
+/-- Step 2 only constrains instances in the promise domain. -/
+def IsPolynomialTimeOn
+    (implementation : FixedEncodingRAMSearchImplementation
+      inputEncoding outputEncoding valid solution) : Prop :=
+  ∃ time : Polynomial ℕ, ∀ input, valid input →
+    implementation.operationCount input ≤
+      time.eval (inputEncoding.size input)
+
+def HasPolynomialResourceOn
+    (implementation : FixedEncodingRAMSearchImplementation
+      inputEncoding outputEncoding valid solution)
+    (resource : Input → ProfiledCost ExecutionResult → ℕ) : Prop :=
+  ∃ bound : Polynomial ℕ, ∀ input, valid input →
+    resource input (implementation.execution input) ≤
+      bound.eval (inputEncoding.size input)
+
+theorem isPolynomialTimeOn_iff_stepsResource
+    (implementation : FixedEncodingRAMSearchImplementation
+      inputEncoding outputEncoding valid solution) :
+    implementation.IsPolynomialTimeOn ↔
+      implementation.HasPolynomialResourceOn
+        (fun _ execution ↦ ProfiledCost.steps execution) :=
+  Iff.rfl
+
+end FixedEncodingRAMSearchImplementation
+
 /-- A fixed-representation polynomial-time solver for a dependent search
 relation on a promise domain.  Unlike `CostedSearchImplementation`, both the
 answer and its running time come from the same finite instruction-level
@@ -592,7 +864,89 @@ structure StrictRAMSearchableInPolyTime
           (inputEncoding.encode input)) ≤
       time.eval (inputEncoding.size input)
 
+namespace StrictRAMSearchableInPolyTime
+
+variable {Input : Type u} {Output : Input → Type v}
+  {inputEncoding : Encoding Input}
+  {outputEncoding : DependentEncoding Output}
+  {valid : Input → Prop}
+  {solution : (input : Input) → Output input → Prop}
+
+def toImplementation
+    (certificate : StrictRAMSearchableInPolyTime
+      inputEncoding outputEncoding valid solution) :
+    FixedEncodingRAMSearchImplementation
+      inputEncoding outputEncoding valid solution where
+  program := certificate.program
+  fuel := certificate.fuel
+  correct := certificate.correct
+
+theorem toImplementation_isPolynomialTimeOn
+    (certificate : StrictRAMSearchableInPolyTime
+      inputEncoding outputEncoding valid solution) :
+    certificate.toImplementation.IsPolynomialTimeOn :=
+  ⟨certificate.time, certificate.time_bound⟩
+
+end StrictRAMSearchableInPolyTime
+
+theorem nonempty_strictRAMSearchableInPolyTime_iff
+    {Input : Type u} {Output : Input → Type v}
+    (inputEncoding : Encoding Input)
+    (outputEncoding : DependentEncoding Output)
+    (valid : Input → Prop)
+    (solution : (input : Input) → Output input → Prop) :
+    Nonempty (StrictRAMSearchableInPolyTime
+      inputEncoding outputEncoding valid solution) ↔
+      ∃ implementation : FixedEncodingRAMSearchImplementation
+        inputEncoding outputEncoding valid solution,
+        implementation.IsPolynomialTimeOn := by
+  constructor
+  · rintro ⟨certificate⟩
+    exact ⟨certificate.toImplementation,
+      certificate.toImplementation_isPolynomialTimeOn⟩
+  · rintro ⟨implementation, time, timeBound⟩
+    exact ⟨{
+      program := implementation.program
+      fuel := implementation.fuel
+      time := time
+      correct := implementation.correct
+      time_bound := timeBound }⟩
+
 namespace StrictRAMComputableInPolyTimeWithFixedEnvironment
+
+def toImplementation
+    {Input : Type u} {Choice : Input → Type v}
+    {Output : (input : Input) → Choice input → Type w}
+    {inputEncoding : Encoding Input}
+    {outputEncoding : ChoiceDependentEncoding Output}
+    {ExternalOperation : Type*}
+    {environment : (input : Input) →
+      Choice input → MachineEnvironment ExternalOperation}
+    {function : (input : Input) → (choice : Choice input) →
+      Output input choice}
+    (certificate : StrictRAMComputableInPolyTimeWithFixedEnvironment
+      inputEncoding outputEncoding ExternalOperation environment function) :
+    FixedEnvironmentRAMImplementation inputEncoding outputEncoding
+      ExternalOperation environment function where
+  choice_nonempty := certificate.choice_nonempty
+  program := certificate.program
+  fuel := certificate.fuel
+  correct := certificate.correct
+
+theorem toImplementation_isPolynomialTime
+    {Input : Type u} {Choice : Input → Type v}
+    {Output : (input : Input) → Choice input → Type w}
+    {inputEncoding : Encoding Input}
+    {outputEncoding : ChoiceDependentEncoding Output}
+    {ExternalOperation : Type*}
+    {environment : (input : Input) →
+      Choice input → MachineEnvironment ExternalOperation}
+    {function : (input : Input) → (choice : Choice input) →
+      Output input choice}
+    (certificate : StrictRAMComputableInPolyTimeWithFixedEnvironment
+      inputEncoding outputEncoding ExternalOperation environment function) :
+    certificate.toImplementation.IsPolynomialTime :=
+  ⟨certificate.time, certificate.time_bound⟩
 
 def execution
     {Input : Type u} {Choice : Input → Type v}
@@ -676,6 +1030,34 @@ def UsesPolynomialSpace
       bound.eval (inputEncoding.size input)
 
 end StrictRAMComputableInPolyTimeWithFixedEnvironment
+
+theorem nonempty_strictRAMComputableInPolyTimeWithFixedEnvironment_iff
+    {Input : Type u} {Choice : Input → Type v}
+    {Output : (input : Input) → Choice input → Type w}
+    (inputEncoding : Encoding Input)
+    (outputEncoding : ChoiceDependentEncoding Output)
+    (ExternalOperation : Type*)
+    (environment : (input : Input) →
+      Choice input → MachineEnvironment ExternalOperation)
+    (function : (input : Input) → (choice : Choice input) →
+      Output input choice) :
+    Nonempty (StrictRAMComputableInPolyTimeWithFixedEnvironment
+      inputEncoding outputEncoding ExternalOperation environment function) ↔
+      ∃ implementation : FixedEnvironmentRAMImplementation
+        inputEncoding outputEncoding ExternalOperation environment function,
+        implementation.IsPolynomialTime := by
+  constructor
+  · rintro ⟨certificate⟩
+    exact ⟨certificate.toImplementation,
+      certificate.toImplementation_isPolynomialTime⟩
+  · rintro ⟨implementation, time, timeBound⟩
+    exact ⟨{
+      choice_nonempty := implementation.choice_nonempty
+      program := implementation.program
+      fuel := implementation.fuel
+      time := time
+      correct := implementation.correct
+      time_bound := timeBound }⟩
 
 end
 

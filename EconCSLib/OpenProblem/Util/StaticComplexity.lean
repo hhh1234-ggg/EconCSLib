@@ -4,6 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
 import EconCSLib.OpenProblem.Util.UnitCostRAM
+import Mathlib.Algebra.Polynomial.Eval.Defs
 import Mathlib.Data.Nat.Factorial.Basic
 import Mathlib.Data.Nat.Log
 
@@ -86,6 +87,119 @@ def isPolynomial : GrowthExpr → Bool
   | .pow base _ => base.isPolynomial
   | .logarithm _ argument => argument.isPolynomial
   | .exponential | .factorial | .unknown => false
+
+/-- Extract a concrete Mathlib polynomial majorant whenever the symbolic
+checker recognizes the expression.  `maximum` is bounded by addition and
+`logarithm` by its argument.  Failure means only that this finite checker has
+no certificate for the expression. -/
+noncomputable def polynomialMajorant? : GrowthExpr → Option (Polynomial ℕ)
+  | .constant value => some (Polynomial.C value)
+  | .inputSize => some Polynomial.X
+  | .add left right => do
+      return (← left.polynomialMajorant?) + (← right.polynomialMajorant?)
+  | .mul left right => do
+      return (← left.polynomialMajorant?) * (← right.polynomialMajorant?)
+  | .pow base exponent => do
+      return (← base.polynomialMajorant?) ^ exponent
+  | .maximum left right => do
+      return (← left.polynomialMajorant?) + (← right.polynomialMajorant?)
+  | .logarithm _ argument => argument.polynomialMajorant?
+  | .exponential | .factorial | .unknown => none
+
+theorem polynomialMajorant?_isSome_iff (expression : GrowthExpr) :
+    expression.polynomialMajorant?.isSome = expression.isPolynomial := by
+  induction expression with
+  | constant value => rfl
+  | inputSize => rfl
+  | add left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? <;>
+        cases hright : right.polynomialMajorant? <;>
+          simp_all [polynomialMajorant?, isPolynomial]
+  | mul left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? <;>
+        cases hright : right.polynomialMajorant? <;>
+          simp_all [polynomialMajorant?, isPolynomial]
+  | pow base exponent baseIH =>
+      simp [polynomialMajorant?, isPolynomial, Option.isSome_bind, baseIH]
+  | maximum left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? <;>
+        cases hright : right.polynomialMajorant? <;>
+          simp_all [polynomialMajorant?, isPolynomial]
+  | logarithm base argument argumentIH =>
+      simpa [polynomialMajorant?, isPolynomial] using argumentIH
+  | exponential => rfl
+  | factorial => rfl
+  | unknown => rfl
+
+/-- The polynomial returned by `polynomialMajorant?` bounds the expression at
+every input size. -/
+theorem polynomialMajorant?_sound (expression : GrowthExpr)
+    {polynomial : Polynomial ℕ}
+    (reported : expression.polynomialMajorant? = some polynomial) :
+    ∀ n, expression.eval n ≤ polynomial.eval n := by
+  induction expression generalizing polynomial with
+  | constant value =>
+      simp [polynomialMajorant?] at reported
+      subst polynomial
+      simp [eval]
+  | inputSize =>
+      simp [polynomialMajorant?] at reported
+      subst polynomial
+      simp [eval]
+  | add left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? with
+      | none => simp [polynomialMajorant?, hleft] at reported
+      | some leftPolynomial =>
+          cases hright : right.polynomialMajorant? with
+          | none => simp [polynomialMajorant?, hleft, hright] at reported
+          | some rightPolynomial =>
+              simp [polynomialMajorant?, hleft, hright] at reported
+              subst polynomial
+              intro n
+              simpa [eval, Polynomial.eval_add] using
+                Nat.add_le_add (leftIH hleft n) (rightIH hright n)
+  | mul left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? with
+      | none => simp [polynomialMajorant?, hleft] at reported
+      | some leftPolynomial =>
+          cases hright : right.polynomialMajorant? with
+          | none => simp [polynomialMajorant?, hleft, hright] at reported
+          | some rightPolynomial =>
+              simp [polynomialMajorant?, hleft, hright] at reported
+              subst polynomial
+              intro n
+              simpa [eval, Polynomial.eval_mul] using
+                Nat.mul_le_mul (leftIH hleft n) (rightIH hright n)
+  | pow base exponent baseIH =>
+      cases hbase : base.polynomialMajorant? with
+      | none => simp [polynomialMajorant?, hbase] at reported
+      | some basePolynomial =>
+          simp [polynomialMajorant?, hbase] at reported
+          subst polynomial
+          intro n
+          simpa [eval, Polynomial.eval_pow] using
+            Nat.pow_le_pow_left (baseIH hbase n) exponent
+  | maximum left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? with
+      | none => simp [polynomialMajorant?, hleft] at reported
+      | some leftPolynomial =>
+          cases hright : right.polynomialMajorant? with
+          | none => simp [polynomialMajorant?, hleft, hright] at reported
+          | some rightPolynomial =>
+              simp [polynomialMajorant?, hleft, hright] at reported
+              subst polynomial
+              intro n
+              rw [Polynomial.eval_add]
+              exact (max_le_add_of_nonneg
+                (Nat.zero_le (left.eval n)) (Nat.zero_le (right.eval n))).trans
+                  (Nat.add_le_add (leftIH hleft n) (rightIH hright n))
+  | logarithm base argument argumentIH =>
+      intro n
+      exact (Nat.log_le_self base (argument.eval n)).trans
+        (argumentIH reported n)
+  | exponential => simp [polynomialMajorant?] at reported
+  | factorial => simp [polynomialMajorant?] at reported
+  | unknown => simp [polynomialMajorant?] at reported
 
 /-- A polynomially bounded natural function remains polynomially bounded
 after taking any fixed natural power. -/

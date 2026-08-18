@@ -4,7 +4,9 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
 import EconCSLib.OpenProblem.Util.UnitCostRAM
+import Mathlib.Algebra.MvPolynomial.Eval
 import Mathlib.Algebra.Polynomial.Eval.Defs
+import Mathlib.Data.Nat.Log
 
 /-!
 # Polynomial size growth for unit-cost RAM computations
@@ -25,6 +27,13 @@ bounded-fold developments in OpenAI's `ten-proofs/GapCVP.lean`:
 * sequential composition substitutes a polynomial output-size bound into the
   cost bound of the continuation;
 * counted and fuelled loops need bounds only on reachable states.
+
+The semantic endpoint reuses Mathlib's `Polynomial ℕ` and
+`MvPolynomial Parameter ℕ`.  The former is proved equivalent to the
+coefficient/exponent normal form used by the lightweight checker.  The latter
+provides genuine named multivariate bounds, with a theorem showing that for a
+fixed finite parameter family this is equivalent to a polynomial in the sum
+of the parameters.
 
 The size functions are deliberately abstract.  For representation-aware
 claims, instantiate them with `Encoding.size` or `DependentEncoding.size`.
@@ -90,7 +99,278 @@ theorem iff_exists_natPolynomial {cost : Input → ℕ} :
   · rintro ⟨polynomial, bound⟩
     exact IsPolyBound.of_le (natPolynomialEval_comp polynomial) bound
 
+/-! ## Closure rules for common algorithmic bounds -/
+
+/-- Taking a pointwise maximum preserves polynomial boundedness.  This is the
+basic rule used for worst-case branches. -/
+theorem maximum {left right : Input → ℕ}
+    (hleft : IsPolyBound sizeOf left)
+    (hright : IsPolyBound sizeOf right) :
+    IsPolyBound sizeOf (fun input ↦ max (left input) (right input)) := by
+  apply IsPolyBound.of_le (IsPolyBound.add hleft hright)
+  intro input
+  omega
+
+/-- Taking a pointwise minimum preserves polynomial boundedness. -/
+theorem minimum_left {left right : Input → ℕ}
+    (hleft : IsPolyBound sizeOf left) :
+    IsPolyBound sizeOf (fun input ↦ min (left input) (right input)) :=
+  IsPolyBound.of_le hleft fun input ↦
+    min_le_left (left input) (right input)
+
+/-- Truncated subtraction cannot increase the left-hand cost. -/
+theorem tsub {left right : Input → ℕ}
+    (hleft : IsPolyBound sizeOf left) :
+    IsPolyBound sizeOf (fun input ↦ left input - right input) :=
+  IsPolyBound.of_le hleft fun input ↦
+    Nat.sub_le (left input) (right input)
+
+/-- A natural logarithm of a polynomially bounded quantity is polynomially
+bounded.  This intentionally gives a conservative polynomial certificate;
+it does not attempt to preserve a logarithmic complexity class. -/
+theorem logarithm (base : ℕ) {argument : Input → ℕ}
+    (hargument : IsPolyBound sizeOf argument) :
+    IsPolyBound sizeOf (fun input ↦ Nat.log base (argument input)) :=
+  IsPolyBound.of_le hargument fun input ↦
+    Nat.log_le_self base (argument input)
+
+/-- Select one of two polynomial bounds using an arbitrary predicate. -/
+theorem ite (condition : Input → Prop) [DecidablePred condition]
+    {ifTrue ifFalse : Input → ℕ}
+    (htrue : IsPolyBound sizeOf ifTrue)
+    (hfalse : IsPolyBound sizeOf ifFalse) :
+    IsPolyBound sizeOf
+      (fun input ↦ if condition input then ifTrue input else ifFalse input) := by
+  apply IsPolyBound.of_le (IsPolyBound.maximum htrue hfalse)
+  intro input
+  split <;> simp_all
+
+/-- A sum over a fixed finite index set preserves polynomial boundedness.
+The individual hidden constants may depend on the index because the index set
+itself is fixed and finite. -/
+theorem finset_sum {Index : Type v} (indices : Finset Index)
+    (cost : Index → Input → ℕ)
+    (hcost : ∀ index ∈ indices, IsPolyBound sizeOf (cost index)) :
+    IsPolyBound sizeOf (fun input ↦ ∑ index ∈ indices, cost index input) := by
+  classical
+  induction indices using Finset.induction_on with
+  | empty =>
+      simpa using IsPolyBound.const (sizeOf := sizeOf) 0
+  | @insert index indices notMem ih =>
+      have hindex := hcost index (Finset.mem_insert_self index indices)
+      have hrest : ∀ item ∈ indices, IsPolyBound sizeOf (cost item) :=
+        fun item membership ↦ hcost item (Finset.mem_insert_of_mem membership)
+      simpa [Finset.sum_insert, notMem] using IsPolyBound.add hindex (ih hrest)
+
+/-- Substitute a polynomially bounded intermediate natural value into a
+polynomially bounded outer cost.  This is the scalar core of sequential
+composition; representation-aware algorithms additionally need a checked
+output-size certificate. -/
+theorem comp {inner : Input → ℕ} {outer : ℕ → ℕ}
+    (hinner : IsPolyBound sizeOf inner)
+    (houter : IsPolyBound id outer) :
+    IsPolyBound sizeOf (fun input ↦ outer (inner input)) := by
+  obtain ⟨coefficient, exponent, outerBound⟩ := houter
+  apply IsPolyBound.of_le
+    (IsPolyBound.mul
+      (IsPolyBound.const (sizeOf := sizeOf) coefficient)
+      (IsPolyBound.pow
+        (IsPolyBound.add hinner (IsPolyBound.const 1)) exponent))
+  intro input
+  exact outerBound (inner input)
+
+/-- A product over a fixed finite index set preserves polynomial
+boundedness.  The finiteness must be independent of the input; a
+polynomially-growing number of nonconstant factors may be exponential. -/
+theorem finset_prod {Index : Type v} (indices : Finset Index)
+    (cost : Index → Input → ℕ)
+    (hcost : ∀ index ∈ indices, IsPolyBound sizeOf (cost index)) :
+    IsPolyBound sizeOf (fun input ↦ ∏ index ∈ indices, cost index input) := by
+  classical
+  induction indices using Finset.induction_on with
+  | empty =>
+      simpa using IsPolyBound.const (sizeOf := sizeOf) 1
+  | @insert index indices notMem ih =>
+      have hindex := hcost index (Finset.mem_insert_self index indices)
+      have hrest : ∀ item ∈ indices, IsPolyBound sizeOf (cost item) :=
+        fun item membership ↦ hcost item (Finset.mem_insert_of_mem membership)
+      simpa [Finset.prod_insert, notMem] using IsPolyBound.mul hindex (ih hrest)
+
 end IsPolyBound
+
+/-! ## Genuine multivariate polynomial bounds -/
+
+/-- A resource counter is bounded by one multivariate polynomial with natural
+coefficients in a family of named size parameters.
+
+Unlike the list interface `IsPolyBoundInSizes`, this definition retains the
+identity of every parameter.  The variable type need not be finite: every
+`MvPolynomial` mentions only finitely many variables.  For a fixed finite
+parameter type the definition is equivalent to a univariate polynomial bound
+in the sum of all parameters; see `isMvPolynomialBound_iff_aggregate` below. -/
+def IsMvPolynomialBound {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) : Prop :=
+  ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input,
+    cost input ≤ polynomial.eval (sizes input)
+
+/-- Promise-problem version of `IsMvPolynomialBound`. -/
+def IsMvPolynomialBoundOn {Input : Type u} {Parameter : Type v}
+    (valid : Input → Prop) (sizes : Input → Parameter → ℕ)
+    (cost : Input → ℕ) : Prop :=
+  ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input, valid input →
+    cost input ≤ polynomial.eval (sizes input)
+
+/-- One multivariate polynomial uniformly bounds every randomized, oracle,
+adversarial, or nondeterministic execution choice.  Neither its coefficients
+nor its support may depend on the choice. -/
+def IsUniformMvPolynomialBound
+    {Input : Type u} {Parameter : Type v} {Choice : Input → Type w}
+    (sizes : Input → Parameter → ℕ)
+    (cost : (input : Input) → Choice input → ℕ) : Prop :=
+  ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input choice,
+    cost input choice ≤ polynomial.eval (sizes input)
+
+/-- Promise-restricted uniform multivariate bound. -/
+def IsUniformMvPolynomialBoundOn
+    {Input : Type u} {Parameter : Type v} {Choice : Input → Type w}
+    (valid : (input : Input) → Choice input → Prop)
+    (sizes : Input → Parameter → ℕ)
+    (cost : (input : Input) → Choice input → ℕ) : Prop :=
+  ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input choice,
+    valid input choice →
+      cost input choice ≤ polynomial.eval (sizes input)
+
+namespace IsMvPolynomialBound
+
+variable {Input : Type u} {Parameter : Type v}
+  {sizes : Input → Parameter → ℕ}
+
+theorem const (value : ℕ) :
+    IsMvPolynomialBound sizes (fun _ ↦ value) :=
+  ⟨MvPolynomial.C value, fun _ ↦ by simp⟩
+
+theorem coordinate (parameter : Parameter) :
+    IsMvPolynomialBound sizes (fun input ↦ sizes input parameter) :=
+  ⟨MvPolynomial.X parameter, fun _ ↦ by simp⟩
+
+theorem of_le {left right : Input → ℕ}
+    (hright : IsMvPolynomialBound sizes right)
+    (hle : ∀ input, left input ≤ right input) :
+    IsMvPolynomialBound sizes left := by
+  obtain ⟨polynomial, bound⟩ := hright
+  exact ⟨polynomial, fun input ↦ (hle input).trans (bound input)⟩
+
+theorem add {left right : Input → ℕ}
+    (hleft : IsMvPolynomialBound sizes left)
+    (hright : IsMvPolynomialBound sizes right) :
+    IsMvPolynomialBound sizes (fun input ↦ left input + right input) := by
+  obtain ⟨leftPolynomial, leftBound⟩ := hleft
+  obtain ⟨rightPolynomial, rightBound⟩ := hright
+  refine ⟨leftPolynomial + rightPolynomial, fun input ↦ ?_⟩
+  rw [MvPolynomial.eval_add]
+  exact Nat.add_le_add (leftBound input) (rightBound input)
+
+theorem mul {left right : Input → ℕ}
+    (hleft : IsMvPolynomialBound sizes left)
+    (hright : IsMvPolynomialBound sizes right) :
+    IsMvPolynomialBound sizes (fun input ↦ left input * right input) := by
+  obtain ⟨leftPolynomial, leftBound⟩ := hleft
+  obtain ⟨rightPolynomial, rightBound⟩ := hright
+  refine ⟨leftPolynomial * rightPolynomial, fun input ↦ ?_⟩
+  rw [MvPolynomial.eval_mul]
+  exact Nat.mul_le_mul (leftBound input) (rightBound input)
+
+theorem pow {cost : Input → ℕ}
+    (hcost : IsMvPolynomialBound sizes cost) (exponent : ℕ) :
+    IsMvPolynomialBound sizes (fun input ↦ cost input ^ exponent) := by
+  obtain ⟨polynomial, bound⟩ := hcost
+  refine ⟨polynomial ^ exponent, fun input ↦ ?_⟩
+  rw [MvPolynomial.eval_pow]
+  exact Nat.pow_le_pow_left (bound input) exponent
+
+theorem maximum {left right : Input → ℕ}
+    (hleft : IsMvPolynomialBound sizes left)
+    (hright : IsMvPolynomialBound sizes right) :
+    IsMvPolynomialBound sizes (fun input ↦ max (left input) (right input)) := by
+  apply IsMvPolynomialBound.of_le (IsMvPolynomialBound.add hleft hright)
+  intro input
+  omega
+
+end IsMvPolynomialBound
+
+/-- Every natural-coefficient multivariate polynomial evaluated on a fixed
+finite vector is polynomially bounded in the sum of that vector. -/
+theorem isPolyBound_mvPolynomialEval_aggregate
+    {Input : Type u} {Parameter : Type v} [Fintype Parameter]
+    (sizes : Input → Parameter → ℕ)
+    (polynomial : MvPolynomial Parameter ℕ) :
+    IsPolyBound (fun input ↦ ∑ parameter, sizes input parameter)
+      (fun input ↦ polynomial.eval (sizes input)) := by
+  classical
+  induction polynomial using MvPolynomial.induction_on with
+  | C value =>
+      simpa using IsPolyBound.const
+        (sizeOf := fun input ↦ ∑ parameter, sizes input parameter) value
+  | add left right leftIH rightIH =>
+      simpa [MvPolynomial.eval_add] using IsPolyBound.add leftIH rightIH
+  | mul_X polynomial parameter polynomialIH =>
+      have coordinateBound :
+          IsPolyBound (fun input ↦ ∑ parameter, sizes input parameter)
+            (fun input ↦ sizes input parameter) := by
+        apply IsPolyBound.of_le IsPolyBound.self
+        intro input
+        exact Finset.single_le_sum (fun _ _ ↦ Nat.zero_le _)
+          (Finset.mem_univ parameter)
+      simpa [MvPolynomial.eval_mul] using
+        IsPolyBound.mul polynomialIH coordinateBound
+
+/-- For a fixed finite family of named parameters, a genuine multivariate
+polynomial bound is equivalent to the usual complexity-theory convention of
+one polynomial in their aggregate size. -/
+theorem isMvPolynomialBound_iff_aggregate
+    {Input : Type u} {Parameter : Type v} [Fintype Parameter]
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) :
+    IsMvPolynomialBound sizes cost ↔
+      IsPolyBound (fun input ↦ ∑ parameter, sizes input parameter) cost := by
+  classical
+  constructor
+  · rintro ⟨polynomial, bound⟩
+    exact IsPolyBound.of_le
+      (isPolyBound_mvPolynomialEval_aggregate sizes polynomial) bound
+  · rintro ⟨coefficient, exponent, bound⟩
+    let aggregatePolynomial : MvPolynomial Parameter ℕ :=
+      ∑ parameter : Parameter, MvPolynomial.X parameter
+    refine ⟨MvPolynomial.C coefficient *
+      (aggregatePolynomial + MvPolynomial.C 1) ^ exponent, fun input ↦ ?_⟩
+    simpa [aggregatePolynomial, MvPolynomial.eval_mul,
+      MvPolynomial.eval_add, MvPolynomial.eval_pow,
+      MvPolynomial.eval_sum] using bound input
+
+/-- Choice-uniform counterpart of `isMvPolynomialBound_iff_aggregate`. -/
+theorem isUniformMvPolynomialBound_iff_aggregate
+    {Input : Type u} {Parameter : Type v} {Choice : Input → Type w}
+    [Fintype Parameter]
+    (sizes : Input → Parameter → ℕ)
+    (cost : (input : Input) → Choice input → ℕ) :
+    IsUniformMvPolynomialBound sizes cost ↔
+      IsUniformPolyBound
+        (fun input ↦ ∑ parameter, sizes input parameter) cost := by
+  classical
+  constructor
+  · rintro ⟨polynomial, bound⟩
+    obtain ⟨coefficient, exponent, polynomialBound⟩ :=
+      isPolyBound_mvPolynomialEval_aggregate sizes polynomial
+    exact ⟨coefficient, exponent, fun input choice ↦
+      (bound input choice).trans (polynomialBound input)⟩
+  · rintro ⟨coefficient, exponent, bound⟩
+    let aggregatePolynomial : MvPolynomial Parameter ℕ :=
+      ∑ parameter : Parameter, MvPolynomial.X parameter
+    refine ⟨MvPolynomial.C coefficient *
+      (aggregatePolynomial + MvPolynomial.C 1) ^ exponent,
+      fun input choice ↦ ?_⟩
+    simpa [aggregatePolynomial, MvPolynomial.eval_mul,
+      MvPolynomial.eval_add, MvPolynomial.eval_pow,
+      MvPolynomial.eval_sum] using bound input choice
 
 /-! ## Polynomial output-size certificates -/
 

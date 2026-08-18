@@ -28,6 +28,9 @@ Every polynomial predicate means only that *some* natural constants
 nor optimizes those constants.  A list of nonnegative size parameters is
 aggregated by addition, which is equivalent to the usual multivariate
 polynomial convention up to changing the hidden constants and exponent.
+When named variables matter, `MultivariatePolynomialCostBound` instead uses
+Mathlib's genuine `MvPolynomial`; the library proves the two conventions
+equivalent for every fixed finite parameter family.
 
 `RAMCostedImplementation` is a trusted instrumentation interface: it is useful
 inside proofs, but by itself cannot define a complexity class because
@@ -198,6 +201,26 @@ structure RAMPolynomialSizeAwareImplementation
   polynomialTime : implementation.IsPolynomial sizeOf
   polynomialOutputSize : outputSizeCertificate.IsPolynomial sizeOf
 
+/-- Symbolic upper-bound language used by the executable checker. -/
+abbrev RAMGrowthExpr := UnitCostRAM.StaticComplexity.GrowthExpr
+
+/-- Execute the conservative polynomial-growth decision procedure. -/
+def decideRAMGrowthPolynomial (expression : RAMGrowthExpr) : Bool :=
+  expression.isPolynomial
+
+/-- Proof-level extraction of a concrete Mathlib polynomial majorant.  The
+Boolean decision procedure remains executable; Mathlib's polynomial algebra
+is noncomputable data in the current library. -/
+noncomputable def ramGrowthPolynomialMajorant?
+    (expression : RAMGrowthExpr) : Option (Polynomial ℕ) :=
+  expression.polynomialMajorant?
+
+theorem ramGrowthPolynomialMajorant?_sound
+    (expression : RAMGrowthExpr) {polynomial : Polynomial ℕ}
+    (reported : ramGrowthPolynomialMajorant? expression = some polynomial) :
+    ∀ inputSize, expression.eval inputSize ≤ polynomial.eval inputSize :=
+  expression.polynomialMajorant?_sound reported
+
 /-- Typed primitive language model used to extract an exact symbolic cost
 from the sequence of primitive calls selected during execution. -/
 abbrev RAMPrimitiveModel (Instruction : Type u → Type v) :=
@@ -221,6 +244,42 @@ abbrev RAMStructuredAlgorithm
     {Input : Type u} (sizeOf : Input → ℕ)
     (State : Input → Type v) (Output : Input → Type w) :=
   UnitCostRAM.StaticComplexity.StructuredAlgorithm sizeOf State Output
+
+/-! ## Two-step strict RAM interface -/
+
+/-- Step 1 for a deterministic function: a fixed-encoding program and its
+exact interpreter-generated operation count, without an asymptotic claim. -/
+abbrev FixedEncodingRAMImplementation
+    {Input : Type u} {Output : Input → Type v}
+    (inputEncoding : UnitCostRAM.Encoding Input)
+    (outputEncoding : UnitCostRAM.DependentEncoding Output)
+    (function : (input : Input) → Output input) :=
+  UnitCostRAM.FixedEncodingRAMImplementation
+    inputEncoding outputEncoding function
+
+/-- Step 1 for randomized/oracle/adversarial execution families. -/
+abbrev FixedEnvironmentRAMImplementation
+    {Input : Type u} {Choice : Input → Type v}
+    {Output : (input : Input) → Choice input → Type w}
+    (inputEncoding : UnitCostRAM.Encoding Input)
+    (outputEncoding : UnitCostRAM.ChoiceDependentEncoding Output)
+    (ExternalOperation : Type*)
+    (environment : (input : Input) →
+      Choice input → UnitCostRAM.MachineEnvironment ExternalOperation)
+    (function : (input : Input) →
+      (choice : Choice input) → Output input choice) :=
+  UnitCostRAM.FixedEnvironmentRAMImplementation inputEncoding outputEncoding
+    ExternalOperation environment function
+
+/-- Step 1 for a promise search relation. -/
+abbrev FixedEncodingRAMSearchImplementation
+    {Input : Type u} {Output : Input → Type v}
+    (inputEncoding : UnitCostRAM.Encoding Input)
+    (outputEncoding : UnitCostRAM.DependentEncoding Output)
+    (valid : Input → Prop)
+    (solution : (input : Input) → Output input → Prop) :=
+  UnitCostRAM.FixedEncodingRAMSearchImplementation
+    inputEncoding outputEncoding valid solution
 
 /-- Finite instruction-level real-RAM certificate with input/output
 representations fixed by the surrounding problem statement and an explicit
@@ -480,11 +539,29 @@ def PolynomialCostBound
     {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℕ) : Prop :=
   UnitCostRAM.IsPolyBound sizeOf cost
 
+/-- Problem-facing characterization using Mathlib's standard polynomial
+datatype rather than the coefficient/exponent normal form. -/
+theorem polynomialCostBound_iff_exists_polynomial
+    {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℕ) :
+    PolynomialCostBound sizeOf cost ↔
+      ∃ polynomial : Polynomial ℕ, ∀ input,
+        cost input ≤ polynomial.eval (sizeOf input) :=
+  UnitCostRAM.IsPolyBound.iff_exists_natPolynomial
+
 /-- A concrete resource counter is polynomial in several named size
 parameters. -/
 def PolynomialCostBoundInSizes
     {Input : Type u} (sizes : Input → List ℕ) (cost : Input → ℕ) : Prop :=
   UnitCostRAM.IsPolyBoundInSizes sizes cost
+
+/-- A genuine multivariate Mathlib-polynomial bound in named size parameters.
+Use this form when the distinction between parameters such as numbers of
+agents, goods, vertices, and edges should remain visible.  For a fixed finite
+parameter type it is equivalent to `PolynomialCostBound` in their sum. -/
+def MultivariatePolynomialCostBound
+    {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) : Prop :=
+  UnitCostRAM.IsMvPolynomialBound sizes cost
 
 /-- Promise-problem form of `PolynomialCostBound`. -/
 def PolynomialCostBoundOn
@@ -497,6 +574,13 @@ def PolynomialCostBoundInSizesOn
     {Input : Type u} (valid : Input → Prop)
     (sizes : Input → List ℕ) (cost : Input → ℕ) : Prop :=
   UnitCostRAM.IsPolyBoundInSizesOn valid sizes cost
+
+/-- Promise-problem form of `MultivariatePolynomialCostBound`. -/
+def MultivariatePolynomialCostBoundOn
+    {Input : Type u} {Parameter : Type v}
+    (valid : Input → Prop) (sizes : Input → Parameter → ℕ)
+    (cost : Input → ℕ) : Prop :=
+  UnitCostRAM.IsMvPolynomialBoundOn valid sizes cost
 
 /-- A resource counter is polynomial uniformly over a seed, oracle,
 tie-breaking rule, transcript, or execution path. -/
@@ -512,6 +596,14 @@ def UniformPolynomialCostBoundInSizes
     (sizes : Input → List ℕ)
     (cost : (input : Input) → Choice input → ℕ) : Prop :=
   UnitCostRAM.IsUniformPolyBoundInSizes sizes cost
+
+/-- One genuine multivariate polynomial uniformly bounds all seeds, legal
+oracles, tie-breaking rules, or execution paths. -/
+def UniformMultivariatePolynomialCostBound
+    {Input : Type u} {Parameter : Type v} {Choice : Input → Type w}
+    (sizes : Input → Parameter → ℕ)
+    (cost : (input : Input) → Choice input → ℕ) : Prop :=
+  UnitCostRAM.IsUniformMvPolynomialBound sizes cost
 
 /-- Uniform polynomial bound restricted to legal seeds, oracles,
 tie-breaking rules, transcripts, or other execution choices. -/
@@ -529,6 +621,24 @@ def UniformPolynomialCostBoundInSizesOn
     (sizes : Input → List ℕ)
     (cost : (input : Input) → Choice input → ℕ) : Prop :=
   UnitCostRAM.IsUniformPolyBoundInSizesOn valid sizes cost
+
+/-- Promise-restricted uniform genuine multivariate bound. -/
+def UniformMultivariatePolynomialCostBoundOn
+    {Input : Type u} {Parameter : Type v} {Choice : Input → Type w}
+    (valid : (input : Input) → Choice input → Prop)
+    (sizes : Input → Parameter → ℕ)
+    (cost : (input : Input) → Choice input → ℕ) : Prop :=
+  UnitCostRAM.IsUniformMvPolynomialBoundOn valid sizes cost
+
+/-- The named-parameter and aggregate-size definitions agree for every fixed
+finite parameter family. -/
+theorem multivariatePolynomialCostBound_iff_aggregate
+    {Input : Type u} {Parameter : Type v} [Fintype Parameter]
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) :
+    MultivariatePolynomialCostBound sizes cost ↔
+      PolynomialCostBound
+        (fun input ↦ ∑ parameter, sizes input parameter) cost :=
+  UnitCostRAM.isMvPolynomialBound_iff_aggregate sizes cost
 
 /-- A nonnegative real-valued expected resource usage is polynomially bounded.
 This is the appropriate interface when the source explicitly asks for
@@ -549,6 +659,16 @@ def PolynomialExpectedCostBoundInSizes
   PolynomialExpectedCostBound
     (fun input => UnitCostRAM.aggregateSize (sizes input)) expectedCost
 
+/-- Expected resource usage bounded by a genuine multivariate polynomial in
+named size parameters. -/
+def MultivariatePolynomialExpectedCostBound
+    {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ)
+    (expectedCost : Input → ℝ) : Prop :=
+  (∀ input, 0 ≤ expectedCost input) ∧
+    ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input,
+      expectedCost input ≤ (polynomial.eval (sizes input) : ℝ)
+
 /-- Expected polynomial resource usage restricted to inputs satisfying a
 promise.  Both nonnegativity and the polynomial bound are required only on
 valid inputs. -/
@@ -560,6 +680,16 @@ def PolynomialExpectedCostBoundOn
       ∀ input, valid input →
         expectedCost input ≤
           (coefficient * (sizeOf input + 1) ^ exponent : ℕ)
+
+/-- Promise-restricted expected multivariate polynomial bound. -/
+def MultivariatePolynomialExpectedCostBoundOn
+    {Input : Type u} {Parameter : Type v}
+    (valid : Input → Prop) (sizes : Input → Parameter → ℕ)
+    (expectedCost : Input → ℝ) : Prop :=
+  (∀ input, valid input → 0 ≤ expectedCost input) ∧
+    ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input,
+      valid input →
+        expectedCost input ≤ (polynomial.eval (sizes input) : ℝ)
 
 /-- Multivariate-size version of `PolynomialExpectedCostBoundOn`. -/
 def PolynomialExpectedCostBoundInSizesOn
