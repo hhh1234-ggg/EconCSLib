@@ -404,16 +404,44 @@ private partial def inferNaturalGrowth : Expr → GrowthExpr
             | some left, some right =>
                 .mul (inferNaturalGrowth left) (inferNaturalGrowth right)
             | _, _ => .unknown
-          else if #["Nat.sub", "Nat.div", "Nat.mod"].contains text ||
-              (#["HSub.hSub", "HDiv.hDiv"].contains text &&
-                hasHomogeneousNaturalTypes arguments) then
+          else if text == "Nat.sub" ||
+              (text == "HSub.hSub" && hasHomogeneousNaturalTypes arguments) then
+            match argumentFromEnd? arguments 1, argumentFromEnd? arguments 0 with
+            | some left, some right =>
+                .subtract (inferNaturalGrowth left) (inferNaturalGrowth right)
+            | _, _ => .unknown
+          else if text == "Nat.div" ||
+              (text == "HDiv.hDiv" && hasHomogeneousNaturalTypes arguments) then
+            match argumentFromEnd? arguments 1, argumentFromEnd? arguments 0 with
+            | some numerator, some denominator =>
+                .divide (inferNaturalGrowth numerator)
+                  (inferNaturalGrowth denominator)
+            | _, _ => .unknown
+          else if text == "Nat.mod" then
             match argumentFromEnd? arguments 1 with
             | some left => inferNaturalGrowth left
             | none => .unknown
+          else if text == "Nat.sqrt" then
+            match argumentFromEnd? arguments 0 with
+            | some argument => .squareRoot (inferNaturalGrowth argument)
+            | none => .unknown
+          else if text == "Nat.log" then
+            match argumentFromEnd? arguments 1, argumentFromEnd? arguments 0 with
+            | some base, some argument =>
+                let argumentGrowth := inferNaturalGrowth argument
+                match inferNaturalGrowth base with
+                | .constant fixedBase => .logarithm fixedBase argumentGrowth
+                | _ => argumentGrowth
+            | _, _ => .unknown
           else if #["Nat.max", "Max.max", "max"].contains text then
             match argumentFromEnd? arguments 1, argumentFromEnd? arguments 0 with
             | some left, some right =>
                 .maximum (inferNaturalGrowth left) (inferNaturalGrowth right)
+            | _, _ => .unknown
+          else if #["Nat.min", "Min.min", "min"].contains text then
+            match argumentFromEnd? arguments 1, argumentFromEnd? arguments 0 with
+            | some left, some right =>
+                .minimum (inferNaturalGrowth left) (inferNaturalGrowth right)
             | _, _ => .unknown
           else if text == "Nat.succ" then
             match argumentFromEnd? arguments 0 with
@@ -1429,7 +1457,29 @@ private def simplifyForDisplay : GrowthExpr → GrowthExpr
       else match left, right with
         | .constant left, .constant right => .constant (max left right)
         | left, right => .maximum left right
+  | .minimum left right =>
+      let left := simplifyForDisplay left
+      let right := simplifyForDisplay right
+      if left == right then left
+      else match left, right with
+        | .constant left, .constant right => .constant (min left right)
+        | left, right => .minimum left right
+  | .subtract left right =>
+      match simplifyForDisplay left, simplifyForDisplay right with
+      | left, .constant 0 => left
+      | .constant left, .constant right => .constant (left - right)
+      | left, right => .subtract left right
+  | .divide numerator denominator =>
+      match simplifyForDisplay numerator, simplifyForDisplay denominator with
+      | numerator, .constant 1 => numerator
+      | .constant numerator, .constant denominator =>
+          .constant (numerator / denominator)
+      | numerator, denominator => .divide numerator denominator
   | .logarithm base argument => .logarithm base (simplifyForDisplay argument)
+  | .squareRoot argument =>
+      match simplifyForDisplay argument with
+      | .constant value => .constant value.sqrt
+      | argument => .squareRoot argument
   | expression => expression
 
 private def parseRegisteredRule (kind : String)

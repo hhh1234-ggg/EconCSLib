@@ -7,6 +7,7 @@ import EconCSLib.OpenProblem.Util.UnitCostRAM
 import Mathlib.Algebra.MvPolynomial.Eval
 import Mathlib.Algebra.Polynomial.Eval.Defs
 import Mathlib.Data.Nat.Log
+import Mathlib.Data.Nat.Sqrt
 
 /-!
 # Polynomial size growth for unit-cost RAM computations
@@ -99,6 +100,87 @@ theorem iff_exists_natPolynomial {cost : Input → ℕ} :
   · rintro ⟨polynomial, bound⟩
     exact IsPolyBound.of_le (natPolynomialEval_comp polynomial) bound
 
+/-- Data-carrying form of a polynomial upper bound for an arbitrary natural-
+valued function.  Unlike the finite `GrowthExpr` checker, this certificate is
+open ended: `cost` may be any Lean function, including a formula using a
+library routine or a user-defined analytic expression.  Soundness comes from
+the pointwise `bound`, not from recognizing the syntax of that formula. -/
+structure PolynomialMajorantCertificate
+    (sizeOf : Input → ℕ) (cost : Input → ℕ) where
+  polynomial : Polynomial ℕ
+  bound : ∀ input, cost input ≤ polynomial.eval (sizeOf input)
+
+namespace PolynomialMajorantCertificate
+
+/-- Turn a data-carrying majorant into the ordinary proposition used by the
+complexity interfaces. -/
+theorem isPolyBound {cost : Input → ℕ}
+    (certificate : PolynomialMajorantCertificate sizeOf cost) :
+    IsPolyBound sizeOf cost :=
+  iff_exists_natPolynomial.mpr ⟨certificate.polynomial, certificate.bound⟩
+
+/-- Every semantic polynomial bound has a concrete Mathlib-polynomial
+certificate.  The construction is noncomputable only because Mathlib's
+polynomial representation currently uses noncomputable instances. -/
+noncomputable def ofIsPolyBound {cost : Input → ℕ}
+    (bound : IsPolyBound sizeOf cost) :
+    PolynomialMajorantCertificate sizeOf cost :=
+  let witness := iff_exists_natPolynomial.mp bound
+  ⟨witness.choose, witness.choose_spec⟩
+
+/-- We may replace a certified counter by any pointwise smaller counter. -/
+def ofLE {left right : Input → ℕ}
+    (rightCertificate : PolynomialMajorantCertificate sizeOf right)
+    (bound : ∀ input, left input ≤ right input) :
+    PolynomialMajorantCertificate sizeOf left :=
+  ⟨rightCertificate.polynomial,
+    fun input ↦ (bound input).trans (rightCertificate.bound input)⟩
+
+/-- Certificates compose under addition. -/
+noncomputable def add {left right : Input → ℕ}
+    (leftCertificate : PolynomialMajorantCertificate sizeOf left)
+    (rightCertificate : PolynomialMajorantCertificate sizeOf right) :
+    PolynomialMajorantCertificate sizeOf
+      (fun input ↦ left input + right input) :=
+  ⟨leftCertificate.polynomial + rightCertificate.polynomial, fun input ↦ by
+    simpa [Polynomial.eval_add] using
+      Nat.add_le_add (leftCertificate.bound input)
+        (rightCertificate.bound input)⟩
+
+/-- Certificates compose under multiplication. -/
+noncomputable def mul {left right : Input → ℕ}
+    (leftCertificate : PolynomialMajorantCertificate sizeOf left)
+    (rightCertificate : PolynomialMajorantCertificate sizeOf right) :
+    PolynomialMajorantCertificate sizeOf
+      (fun input ↦ left input * right input) :=
+  ⟨leftCertificate.polynomial * rightCertificate.polynomial, fun input ↦ by
+    simpa [Polynomial.eval_mul] using
+      Nat.mul_le_mul (leftCertificate.bound input)
+        (rightCertificate.bound input)⟩
+
+/-- Certificates compose under every fixed natural power. -/
+noncomputable def pow {cost : Input → ℕ}
+    (certificate : PolynomialMajorantCertificate sizeOf cost)
+    (exponent : ℕ) :
+    PolynomialMajorantCertificate sizeOf
+      (fun input ↦ cost input ^ exponent) :=
+  ⟨certificate.polynomial ^ exponent, fun input ↦ by
+    simpa [Polynomial.eval_pow] using
+      Nat.pow_le_pow_left (certificate.bound input) exponent⟩
+
+end PolynomialMajorantCertificate
+
+/-- Existence of a data-carrying certificate is exactly the existing
+polynomial-bound proposition.  This is the general escape hatch for explicit
+cost formulae outside the finite symbolic checker. -/
+theorem nonempty_polynomialMajorantCertificate_iff {cost : Input → ℕ} :
+    Nonempty (PolynomialMajorantCertificate sizeOf cost) ↔
+      IsPolyBound sizeOf cost := by
+  constructor
+  · rintro ⟨certificate⟩
+    exact certificate.isPolyBound
+  · exact fun bound ↦ ⟨PolynomialMajorantCertificate.ofIsPolyBound bound⟩
+
 /-! ## Closure rules for common algorithmic bounds -/
 
 /-- Taking a pointwise maximum preserves polynomial boundedness.  This is the
@@ -125,6 +207,23 @@ theorem tsub {left right : Input → ℕ}
   IsPolyBound.of_le hleft fun input ↦
     Nat.sub_le (left input) (right input)
 
+/-- Natural-number division cannot increase its numerator.  No lower bound on
+the denominator is needed because Lean defines division by zero. -/
+theorem division_left {numerator denominator : Input → ℕ}
+    (hnumerator : IsPolyBound sizeOf numerator) :
+    IsPolyBound sizeOf
+      (fun input ↦ numerator input / denominator input) :=
+  IsPolyBound.of_le hnumerator fun input ↦
+    Nat.div_le_self (numerator input) (denominator input)
+
+/-- Integer square root is sublinear and therefore preserves every
+polynomial majorant of its argument. -/
+theorem squareRoot {argument : Input → ℕ}
+    (hargument : IsPolyBound sizeOf argument) :
+    IsPolyBound sizeOf (fun input ↦ Nat.sqrt (argument input)) :=
+  IsPolyBound.of_le hargument fun input ↦
+    Nat.sqrt_le_self (argument input)
+
 /-- A natural logarithm of a polynomially bounded quantity is polynomially
 bounded.  This intentionally gives a conservative polynomial certificate;
 it does not attempt to preserve a logarithmic complexity class. -/
@@ -133,6 +232,20 @@ theorem logarithm (base : ℕ) {argument : Input → ℕ}
     IsPolyBound sizeOf (fun input ↦ Nat.log base (argument input)) :=
   IsPolyBound.of_le hargument fun input ↦
     Nat.log_le_self base (argument input)
+
+/-- The standard `n log n` shape is polynomial for every selected size
+measure.  The theorem deliberately certifies polynomiality rather than
+claiming the sharper `Θ(n log n)` class. -/
+theorem size_mul_log_size (base : ℕ) :
+    IsPolyBound sizeOf
+      (fun input ↦ sizeOf input * Nat.log base (sizeOf input)) :=
+  IsPolyBound.mul IsPolyBound.self
+    (IsPolyBound.logarithm base IsPolyBound.self)
+
+/-- Every fixed power of the selected input size is polynomial. -/
+theorem fixedPower (exponent : ℕ) :
+    IsPolyBound sizeOf (fun input ↦ sizeOf input ^ exponent) :=
+  IsPolyBound.pow IsPolyBound.self exponent
 
 /-- Select one of two polynomial bounds using an arbitrary predicate. -/
 theorem ite (condition : Input → Prop) [DecidablePred condition]
@@ -212,6 +325,44 @@ def IsMvPolynomialBound {Input : Type u} {Parameter : Type v}
     (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) : Prop :=
   ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input,
     cost input ≤ polynomial.eval (sizes input)
+
+/-- Data-carrying multivariate majorant.  This retains the identity of named
+parameters and accepts an arbitrary cost formula once its pointwise bound has
+been proved. -/
+structure MvPolynomialMajorantCertificate
+    {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) where
+  polynomial : MvPolynomial Parameter ℕ
+  bound : ∀ input, cost input ≤ polynomial.eval (sizes input)
+
+namespace MvPolynomialMajorantCertificate
+
+theorem isMvPolynomialBound
+    {Input : Type u} {Parameter : Type v}
+    {sizes : Input → Parameter → ℕ} {cost : Input → ℕ}
+    (certificate : MvPolynomialMajorantCertificate sizes cost) :
+    IsMvPolynomialBound sizes cost :=
+  ⟨certificate.polynomial, certificate.bound⟩
+
+noncomputable def ofIsMvPolynomialBound
+    {Input : Type u} {Parameter : Type v}
+    {sizes : Input → Parameter → ℕ} {cost : Input → ℕ}
+    (bound : IsMvPolynomialBound sizes cost) :
+    MvPolynomialMajorantCertificate sizes cost :=
+  ⟨bound.choose, bound.choose_spec⟩
+
+end MvPolynomialMajorantCertificate
+
+theorem nonempty_mvPolynomialMajorantCertificate_iff
+    {Input : Type u} {Parameter : Type v}
+    {sizes : Input → Parameter → ℕ} {cost : Input → ℕ} :
+    Nonempty (MvPolynomialMajorantCertificate sizes cost) ↔
+      IsMvPolynomialBound sizes cost := by
+  constructor
+  · rintro ⟨certificate⟩
+    exact certificate.isMvPolynomialBound
+  · exact fun bound ↦
+      ⟨MvPolynomialMajorantCertificate.ofIsMvPolynomialBound bound⟩
 
 /-- Promise-problem version of `IsMvPolynomialBound`. -/
 def IsMvPolynomialBoundOn {Input : Type u} {Parameter : Type v}
@@ -295,6 +446,59 @@ theorem maximum {left right : Input → ℕ}
   apply IsMvPolynomialBound.of_le (IsMvPolynomialBound.add hleft hright)
   intro input
   omega
+
+theorem minimum_left {left right : Input → ℕ}
+    (hleft : IsMvPolynomialBound sizes left) :
+    IsMvPolynomialBound sizes
+      (fun input ↦ min (left input) (right input)) :=
+  IsMvPolynomialBound.of_le hleft fun input ↦
+    min_le_left (left input) (right input)
+
+theorem tsub {left right : Input → ℕ}
+    (hleft : IsMvPolynomialBound sizes left) :
+    IsMvPolynomialBound sizes
+      (fun input ↦ left input - right input) :=
+  IsMvPolynomialBound.of_le hleft fun input ↦
+    Nat.sub_le (left input) (right input)
+
+theorem division_left {numerator denominator : Input → ℕ}
+    (hnumerator : IsMvPolynomialBound sizes numerator) :
+    IsMvPolynomialBound sizes
+      (fun input ↦ numerator input / denominator input) :=
+  IsMvPolynomialBound.of_le hnumerator fun input ↦
+    Nat.div_le_self (numerator input) (denominator input)
+
+theorem squareRoot {argument : Input → ℕ}
+    (hargument : IsMvPolynomialBound sizes argument) :
+    IsMvPolynomialBound sizes
+      (fun input ↦ Nat.sqrt (argument input)) :=
+  IsMvPolynomialBound.of_le hargument fun input ↦
+    Nat.sqrt_le_self (argument input)
+
+theorem logarithm (base : ℕ) {argument : Input → ℕ}
+    (hargument : IsMvPolynomialBound sizes argument) :
+    IsMvPolynomialBound sizes
+      (fun input ↦ Nat.log base (argument input)) :=
+  IsMvPolynomialBound.of_le hargument fun input ↦
+    Nat.log_le_self base (argument input)
+
+/-- The familiar graph-size expression `V + E` is a genuine polynomial in
+two named parameters. -/
+theorem coordinate_add (left right : Parameter) :
+    IsMvPolynomialBound sizes
+      (fun input ↦ sizes input left + sizes input right) :=
+  IsMvPolynomialBound.add
+    (IsMvPolynomialBound.coordinate left)
+    (IsMvPolynomialBound.coordinate right)
+
+/-- The familiar graph-size expression `V * E` is a genuine polynomial in
+two named parameters. -/
+theorem coordinate_mul (left right : Parameter) :
+    IsMvPolynomialBound sizes
+      (fun input ↦ sizes input left * sizes input right) :=
+  IsMvPolynomialBound.mul
+    (IsMvPolynomialBound.coordinate left)
+    (IsMvPolynomialBound.coordinate right)
 
 end IsMvPolynomialBound
 

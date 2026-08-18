@@ -3,10 +3,11 @@ Copyright (c) 2026 EconCSLib contributors. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
-import EconCSLib.OpenProblem.Util.UnitCostRAM
+import EconCSLib.OpenProblem.Util.SizeGrowth
 import Mathlib.Algebra.Polynomial.Eval.Defs
 import Mathlib.Data.Nat.Factorial.Basic
 import Mathlib.Data.Nat.Log
+import Mathlib.Data.Nat.Sqrt
 
 /-!
 # Decidable static complexity analysis
@@ -29,6 +30,13 @@ The analyzer also tracks oracle queries, distribution samples, random bits,
 communication, and peak auxiliary space.  A `false` result means "not
 certified by this analyzer"; it is not, in general, a proof that no polynomial
 implementation of the mathematical function exists.
+
+The syntax recognizes the standard closure needed for linear, fixed-power,
+`n log n`, multiloop, and fuel-bounded algorithms.  It is intentionally not
+a complete solver for arbitrary closed-form or analytic expressions.  Such a
+formula can instead use `PolynomialMajorantCertificate` (natural-valued) or
+the public `PolynomialExpectedCostCertificate` (nonnegative real-valued) and
+provide a kernel-checked pointwise majorant.
 
 `AnalyzedComputation` is an intrinsic EDSL for complex functions: dependent
 sequencing, branches, counted loops, list folds, and total fuelled while loops
@@ -54,7 +62,11 @@ inductive GrowthExpr where
   | mul (left right : GrowthExpr)
   | pow (base : GrowthExpr) (exponent : ℕ)
   | maximum (left right : GrowthExpr)
+  | minimum (left right : GrowthExpr)
+  | subtract (left right : GrowthExpr)
+  | divide (numerator denominator : GrowthExpr)
   | logarithm (base : ℕ) (argument : GrowthExpr)
+  | squareRoot (argument : GrowthExpr)
   | exponential
   | factorial
   | unknown
@@ -70,7 +82,12 @@ def eval : GrowthExpr → ℕ → ℕ
   | .mul left right, n => left.eval n * right.eval n
   | .pow base exponent, n => (base.eval n) ^ exponent
   | .maximum left right, n => max (left.eval n) (right.eval n)
+  | .minimum left right, n => min (left.eval n) (right.eval n)
+  | .subtract left right, n => left.eval n - right.eval n
+  | .divide numerator denominator, n =>
+      numerator.eval n / denominator.eval n
   | .logarithm base argument, n => Nat.log base (argument.eval n)
+  | .squareRoot argument, n => Nat.sqrt (argument.eval n)
   | .exponential, n => 2 ^ n
   | .factorial, n => n.factorial
   | .unknown, _ => 0
@@ -82,10 +99,11 @@ the base is irrelevant for this upper-bound fact, including bases `0` and `1`.
 -/
 def isPolynomial : GrowthExpr → Bool
   | .constant _ | .inputSize => true
-  | .add left right | .mul left right | .maximum left right =>
+  | .add left right | .mul left right | .maximum left right |
+      .minimum left right =>
       left.isPolynomial && right.isPolynomial
-  | .pow base _ => base.isPolynomial
-  | .logarithm _ argument => argument.isPolynomial
+  | .subtract left _ | .divide left _ | .pow left _ |
+      .logarithm _ left | .squareRoot left => left.isPolynomial
   | .exponential | .factorial | .unknown => false
 
 /-- Extract a concrete Mathlib polynomial majorant whenever the symbolic
@@ -103,7 +121,14 @@ noncomputable def polynomialMajorant? : GrowthExpr → Option (Polynomial ℕ)
       return (← base.polynomialMajorant?) ^ exponent
   | .maximum left right => do
       return (← left.polynomialMajorant?) + (← right.polynomialMajorant?)
+  | .minimum left right => do
+      let leftPolynomial ← left.polynomialMajorant?
+      let _ ← right.polynomialMajorant?
+      return leftPolynomial
+  | .subtract left _ => left.polynomialMajorant?
+  | .divide numerator _ => numerator.polynomialMajorant?
   | .logarithm _ argument => argument.polynomialMajorant?
+  | .squareRoot argument => argument.polynomialMajorant?
   | .exponential | .factorial | .unknown => none
 
 theorem polynomialMajorant?_isSome_iff (expression : GrowthExpr) :
@@ -125,7 +150,17 @@ theorem polynomialMajorant?_isSome_iff (expression : GrowthExpr) :
       cases hleft : left.polynomialMajorant? <;>
         cases hright : right.polynomialMajorant? <;>
           simp_all [polynomialMajorant?, isPolynomial]
+  | minimum left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? <;>
+        cases hright : right.polynomialMajorant? <;>
+          simp_all [polynomialMajorant?, isPolynomial]
+  | subtract left right leftIH rightIH =>
+      simpa [polynomialMajorant?, isPolynomial] using leftIH
+  | divide numerator denominator numeratorIH denominatorIH =>
+      simpa [polynomialMajorant?, isPolynomial] using numeratorIH
   | logarithm base argument argumentIH =>
+      simpa [polynomialMajorant?, isPolynomial] using argumentIH
+  | squareRoot argument argumentIH =>
       simpa [polynomialMajorant?, isPolynomial] using argumentIH
   | exponential => rfl
   | factorial => rfl
@@ -193,9 +228,33 @@ theorem polynomialMajorant?_sound (expression : GrowthExpr)
               exact (max_le_add_of_nonneg
                 (Nat.zero_le (left.eval n)) (Nat.zero_le (right.eval n))).trans
                   (Nat.add_le_add (leftIH hleft n) (rightIH hright n))
+  | minimum left right leftIH rightIH =>
+      cases hleft : left.polynomialMajorant? with
+      | none => simp [polynomialMajorant?, hleft] at reported
+      | some leftPolynomial =>
+          cases hright : right.polynomialMajorant? with
+          | none => simp [polynomialMajorant?, hleft, hright] at reported
+          | some rightPolynomial =>
+              simp [polynomialMajorant?, hleft, hright] at reported
+              subst polynomial
+              intro n
+              exact (min_le_left (left.eval n) (right.eval n)).trans
+                (leftIH hleft n)
+  | subtract left right leftIH rightIH =>
+      intro n
+      exact (Nat.sub_le (left.eval n) (right.eval n)).trans
+        (leftIH reported n)
+  | divide numerator denominator numeratorIH denominatorIH =>
+      intro n
+      exact (Nat.div_le_self (numerator.eval n) (denominator.eval n)).trans
+        (numeratorIH reported n)
   | logarithm base argument argumentIH =>
       intro n
       exact (Nat.log_le_self base (argument.eval n)).trans
+        (argumentIH reported n)
+  | squareRoot argument argumentIH =>
+      intro n
+      exact (Nat.sqrt_le_self (argument.eval n)).trans
         (argumentIH reported n)
   | exponential => simp [polynomialMajorant?] at reported
   | factorial => simp [polynomialMajorant?] at reported
@@ -238,12 +297,25 @@ theorem isPolynomial_sound (expression : GrowthExpr)
       intro n
       simp only [eval]
       omega
+  | minimum left right leftIH rightIH =>
+      simp only [isPolynomial, Bool.and_eq_true] at accepted
+      simpa [eval] using IsPolyBound.minimum_left
+        (leftIH accepted.1)
+  | subtract left right leftIH rightIH =>
+      simp only [isPolynomial] at accepted
+      simpa [eval] using IsPolyBound.tsub (leftIH accepted)
+  | divide numerator denominator numeratorIH denominatorIH =>
+      simp only [isPolynomial] at accepted
+      simpa [eval] using IsPolyBound.division_left (numeratorIH accepted)
   | logarithm base argument argumentIH =>
       simp only [isPolynomial] at accepted
       apply IsPolyBound.of_le (argumentIH accepted)
       intro n
       simp only [eval]
       exact Nat.log_le_self base (argument.eval n)
+  | squareRoot argument argumentIH =>
+      simp only [isPolynomial] at accepted
+      simpa [eval] using IsPolyBound.squareRoot (argumentIH accepted)
   | exponential => simp [isPolynomial] at accepted
   | factorial => simp [isPolynomial] at accepted
   | unknown => simp [isPolynomial] at accepted

@@ -67,6 +67,8 @@ namespace EconCSBench
 
 universe u v w
 
+open Filter Asymptotics
+
 /-- The unit-cost RAM computation wrapper used by the benchmark API. -/
 abbrev RAMCost := UnitCostRAM.Cost
 
@@ -203,6 +205,17 @@ structure RAMPolynomialSizeAwareImplementation
 
 /-- Symbolic upper-bound language used by the executable checker. -/
 abbrev RAMGrowthExpr := UnitCostRAM.StaticComplexity.GrowthExpr
+
+/-- Mathlib-Big-O comparison with an explicit target shape.  Use this when
+the distinction between, for example, `n log n` and a coarse quadratic
+majorant should remain visible. -/
+abbrev AsymptoticCostBound (cost bound : ℕ → ℕ) :=
+  UnitCostRAM.StaticComplexity.IsAsymptoticallyBoundedBy cost bound
+
+theorem asymptoticCostBound_of_le
+    {cost bound : ℕ → ℕ} (pointwise : ∀ n, cost n ≤ bound n) :
+    AsymptoticCostBound cost bound :=
+  UnitCostRAM.StaticComplexity.isAsymptoticallyBoundedBy_of_le pointwise
 
 /-- Execute the conservative polynomial-growth decision procedure. -/
 def decideRAMGrowthPolynomial (expression : RAMGrowthExpr) : Bool :=
@@ -539,6 +552,22 @@ def PolynomialCostBound
     {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℕ) : Prop :=
   UnitCostRAM.IsPolyBound sizeOf cost
 
+/-- Data-carrying polynomial majorant for an arbitrary natural-valued cost
+formula.  Use this when the finite `RAMGrowthExpr` checker does not know a
+constructor for a library or user-defined function: the formula is unrestricted,
+but its pointwise polynomial majorant must be proved. -/
+abbrev PolynomialCostCertificate
+    {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℕ) :=
+  UnitCostRAM.IsPolyBound.PolynomialMajorantCertificate sizeOf cost
+
+/-- The open-ended certificate interface and `PolynomialCostBound` express
+exactly the same mathematical property. -/
+theorem nonempty_polynomialCostCertificate_iff
+    {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℕ) :
+    Nonempty (PolynomialCostCertificate sizeOf cost) ↔
+      PolynomialCostBound sizeOf cost :=
+  UnitCostRAM.IsPolyBound.nonempty_polynomialMajorantCertificate_iff
+
 /-- Problem-facing characterization using Mathlib's standard polynomial
 datatype rather than the coefficient/exponent normal form. -/
 theorem polynomialCostBound_iff_exists_polynomial
@@ -562,6 +591,20 @@ def MultivariatePolynomialCostBound
     {Input : Type u} {Parameter : Type v}
     (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) : Prop :=
   UnitCostRAM.IsMvPolynomialBound sizes cost
+
+/-- Data-carrying genuine multivariate majorant for an arbitrary cost
+formula. -/
+abbrev MultivariatePolynomialCostCertificate
+    {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) :=
+  UnitCostRAM.MvPolynomialMajorantCertificate sizes cost
+
+theorem nonempty_multivariatePolynomialCostCertificate_iff
+    {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℕ) :
+    Nonempty (MultivariatePolynomialCostCertificate sizes cost) ↔
+      MultivariatePolynomialCostBound sizes cost :=
+  UnitCostRAM.nonempty_mvPolynomialMajorantCertificate_iff
 
 /-- Promise-problem form of `PolynomialCostBound`. -/
 def PolynomialCostBoundOn
@@ -652,6 +695,187 @@ def PolynomialExpectedCostBound
         expectedCost input ≤
           (coefficient * (sizeOf input + 1) ^ exponent : ℕ)
 
+/-- Data-carrying majorant for an arbitrary nonnegative real-valued resource
+formula, such as an exact expectation or a formula involving logarithms,
+roots, integrals, or other analytic operations.  The framework does not try
+to recognize the syntax of `cost`; the checked pointwise inequality is the
+sound extension mechanism. -/
+structure PolynomialExpectedCostCertificate
+    {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℝ) where
+  polynomial : Polynomial ℕ
+  nonnegative : ∀ input, 0 ≤ cost input
+  bound : ∀ input,
+    cost input ≤ ((polynomial.eval (sizeOf input) : ℕ) : ℝ)
+
+namespace PolynomialExpectedCostCertificate
+
+/-- Every nonnegative uniformly bounded real formula has a constant
+polynomial certificate.  This covers, for example, absolute sine/cosine
+factors once their standard Mathlib bound has been supplied. -/
+noncomputable def ofBounded
+    {Input : Type u} {sizeOf : Input → ℕ} {cost : Input → ℝ}
+    (upper : ℕ) (nonnegative : ∀ input, 0 ≤ cost input)
+    (bound : ∀ input, cost input ≤ (upper : ℝ)) :
+    PolynomialExpectedCostCertificate sizeOf cost :=
+  ⟨Polynomial.C upper, nonnegative, fun input ↦ by
+    simpa using bound input⟩
+
+/-- Certify a real-valued formula by sandwiching it below a certified
+natural-valued counter.  This is often the shortest route for floors,
+ceilings, logarithms, square roots, and bounded analytic factors. -/
+noncomputable def ofNatUpperBound
+    {Input : Type u} {sizeOf : Input → ℕ}
+    {cost : Input → ℝ} {upper : Input → ℕ}
+    (upperCertificate : PolynomialCostCertificate sizeOf upper)
+    (nonnegative : ∀ input, 0 ≤ cost input)
+    (bound : ∀ input, cost input ≤ (upper input : ℝ)) :
+    PolynomialExpectedCostCertificate sizeOf cost :=
+  ⟨upperCertificate.polynomial, nonnegative, fun input ↦
+    (bound input).trans (by exact_mod_cast upperCertificate.bound input)⟩
+
+/-- Replace a certified real formula by any nonnegative pointwise smaller
+formula. -/
+def ofLE
+    {Input : Type u} {sizeOf : Input → ℕ} {left right : Input → ℝ}
+    (rightCertificate : PolynomialExpectedCostCertificate sizeOf right)
+    (nonnegative : ∀ input, 0 ≤ left input)
+    (bound : ∀ input, left input ≤ right input) :
+    PolynomialExpectedCostCertificate sizeOf left :=
+  ⟨rightCertificate.polynomial, nonnegative, fun input ↦
+    (bound input).trans (rightCertificate.bound input)⟩
+
+/-- Real polynomial-majorant certificates compose under addition. -/
+noncomputable def add
+    {Input : Type u} {sizeOf : Input → ℕ} {left right : Input → ℝ}
+    (leftCertificate : PolynomialExpectedCostCertificate sizeOf left)
+    (rightCertificate : PolynomialExpectedCostCertificate sizeOf right) :
+    PolynomialExpectedCostCertificate sizeOf
+      (fun input ↦ left input + right input) :=
+  ⟨leftCertificate.polynomial + rightCertificate.polynomial,
+    fun input ↦ add_nonneg (leftCertificate.nonnegative input)
+      (rightCertificate.nonnegative input),
+    fun input ↦ by
+      simpa only [Polynomial.eval_add, Nat.cast_add] using
+        add_le_add (leftCertificate.bound input)
+          (rightCertificate.bound input)⟩
+
+/-- Real polynomial-majorant certificates compose under multiplication of
+nonnegative formulae. -/
+noncomputable def mul
+    {Input : Type u} {sizeOf : Input → ℕ} {left right : Input → ℝ}
+    (leftCertificate : PolynomialExpectedCostCertificate sizeOf left)
+    (rightCertificate : PolynomialExpectedCostCertificate sizeOf right) :
+    PolynomialExpectedCostCertificate sizeOf
+      (fun input ↦ left input * right input) :=
+  ⟨leftCertificate.polynomial * rightCertificate.polynomial,
+    fun input ↦ mul_nonneg (leftCertificate.nonnegative input)
+      (rightCertificate.nonnegative input),
+    fun input ↦ by
+      rw [Polynomial.eval_mul, Nat.cast_mul]
+      exact mul_le_mul (leftCertificate.bound input)
+        (rightCertificate.bound input)
+        (rightCertificate.nonnegative input)
+        (by positivity)⟩
+
+/-- Real polynomial-majorant certificates compose under a fixed natural
+power. -/
+noncomputable def pow
+    {Input : Type u} {sizeOf : Input → ℕ} {cost : Input → ℝ}
+    (certificate : PolynomialExpectedCostCertificate sizeOf cost)
+    (exponent : ℕ) :
+    PolynomialExpectedCostCertificate sizeOf
+      (fun input ↦ cost input ^ exponent) :=
+  ⟨certificate.polynomial ^ exponent,
+    fun input ↦ pow_nonneg (certificate.nonnegative input) exponent,
+    fun input ↦ by
+      rw [Polynomial.eval_pow, Nat.cast_pow]
+      exact pow_le_pow_left₀ (certificate.nonnegative input)
+        (certificate.bound input) exponent⟩
+
+end PolynomialExpectedCostCertificate
+
+/-- The real-valued certificate is equivalent to the existing expected-cost
+predicate.  Hence an explicit formula need not belong to the symbolic AST;
+it only needs a proved polynomial majorant. -/
+theorem nonempty_polynomialExpectedCostCertificate_iff
+    {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℝ) :
+    Nonempty (PolynomialExpectedCostCertificate sizeOf cost) ↔
+      PolynomialExpectedCostBound sizeOf cost := by
+  constructor
+  · rintro ⟨certificate⟩
+    refine ⟨certificate.nonnegative, ?_⟩
+    obtain ⟨coefficient, exponent, polynomialBound⟩ :=
+      UnitCostRAM.IsPolyBound.natPolynomialEval_comp
+        (sizeOf := sizeOf) certificate.polynomial
+    refine ⟨coefficient, exponent, fun input ↦
+      (certificate.bound input).trans ?_⟩
+    exact_mod_cast polynomialBound input
+  · rintro ⟨nonnegative, coefficient, exponent, bound⟩
+    let polynomial : Polynomial ℕ :=
+      Polynomial.C coefficient * (Polynomial.X + 1) ^ exponent
+    refine ⟨⟨polynomial, nonnegative, fun input ↦ ?_⟩⟩
+    simpa [polynomial, Polynomial.eval_mul, Polynomial.eval_add,
+      Polynomial.eval_pow] using bound input
+
+/-- Standard Mathlib-Big-O endpoint for a nonnegative real-valued cost on
+natural input sizes. -/
+def IsRealAsymptoticallyPolynomial (cost : ℕ → ℝ) : Prop :=
+  ∃ exponent : ℕ,
+    cost =O[atTop] (fun n => ((n + 1 : ℕ) : ℝ) ^ exponent)
+
+/-- A global pointwise certificate implies the standard asymptotic
+formulation. -/
+theorem PolynomialExpectedCostCertificate.isRealAsymptoticallyPolynomial
+    {cost : ℕ → ℝ}
+    (certificate : PolynomialExpectedCostCertificate id cost) :
+    IsRealAsymptoticallyPolynomial cost := by
+  have semantic :
+      PolynomialExpectedCostBound id cost :=
+    nonempty_polynomialExpectedCostCertificate_iff id cost |>.mp
+      ⟨certificate⟩
+  obtain ⟨nonnegative, coefficient, exponent, bound⟩ := semantic
+  refine ⟨exponent, isBigO_iff.mpr ⟨(coefficient : ℝ), ?_⟩⟩
+  filter_upwards [] with n
+  simp only [Real.norm_eq_abs, abs_pow]
+  rw [abs_of_nonneg (nonnegative n), abs_of_nonneg (by positivity)]
+  simpa only [Nat.cast_mul, Nat.cast_pow, Nat.cast_add, Nat.cast_one] using
+    bound n
+
+/-- On natural input sizes, the global expected-cost predicate is exactly a
+nonnegativity proof together with Mathlib's standard asymptotic polynomial
+condition.  Thus the pointwise certificate interface does not lose any
+nonnegative function that can already be proved polynomial by Mathlib's
+`IsBigO` API; the finitely many values before the asymptotic threshold are
+absorbed into the natural coefficient. -/
+theorem polynomialExpectedCostBound_iff_isRealAsymptoticallyPolynomial
+    (cost : ℕ → ℝ) :
+    PolynomialExpectedCostBound id cost ↔
+      (∀ n, 0 ≤ cost n) ∧ IsRealAsymptoticallyPolynomial cost := by
+  constructor
+  · intro bound
+    obtain ⟨nonnegative, coefficient, exponent, pointwise⟩ := bound
+    refine ⟨nonnegative, exponent, isBigO_iff.mpr ⟨(coefficient : ℝ), ?_⟩⟩
+    filter_upwards [] with n
+    simp only [Real.norm_eq_abs, abs_pow]
+    rw [abs_of_nonneg (nonnegative n), abs_of_nonneg (by positivity)]
+    simpa only [Nat.cast_mul, Nat.cast_pow, Nat.cast_add, Nat.cast_one] using
+      pointwise n
+  · rintro ⟨nonnegative, exponent, asymptotic⟩
+    obtain ⟨constant, constantPositive, globalBound⟩ :=
+      bound_of_isBigO_nat_atTop asymptotic
+    obtain ⟨coefficient, coefficientBound⟩ := exists_nat_ge constant
+    refine ⟨nonnegative, coefficient, exponent, fun n ↦ ?_⟩
+    have comparison := globalBound (x := n) (by positivity :
+      (((n + 1 : ℕ) : ℝ) ^ exponent) ≠ 0)
+    rw [Real.norm_eq_abs, Real.norm_eq_abs,
+      abs_of_nonneg (nonnegative n), abs_of_nonneg (by positivity)] at comparison
+    exact comparison.trans <| calc
+      constant * (((n + 1 : ℕ) : ℝ) ^ exponent) ≤
+          (coefficient : ℝ) * (((n + 1 : ℕ) : ℝ) ^ exponent) :=
+        mul_le_mul_of_nonneg_right coefficientBound (by positivity)
+      _ = ((coefficient * (n + 1) ^ exponent : ℕ) : ℝ) := by
+        norm_num
+
 /-- Multivariate-size version of `PolynomialExpectedCostBound`. -/
 def PolynomialExpectedCostBoundInSizes
     {Input : Type u} (sizes : Input → List ℕ)
@@ -668,6 +892,26 @@ def MultivariatePolynomialExpectedCostBound
   (∀ input, 0 ≤ expectedCost input) ∧
     ∃ polynomial : MvPolynomial Parameter ℕ, ∀ input,
       expectedCost input ≤ (polynomial.eval (sizes input) : ℝ)
+
+/-- Data-carrying expected-cost majorant in several named parameters. -/
+structure MultivariatePolynomialExpectedCostCertificate
+    {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℝ) where
+  polynomial : MvPolynomial Parameter ℕ
+  nonnegative : ∀ input, 0 ≤ cost input
+  bound : ∀ input,
+    cost input ≤ ((polynomial.eval (sizes input) : ℕ) : ℝ)
+
+theorem nonempty_multivariatePolynomialExpectedCostCertificate_iff
+    {Input : Type u} {Parameter : Type v}
+    (sizes : Input → Parameter → ℕ) (cost : Input → ℝ) :
+    Nonempty (MultivariatePolynomialExpectedCostCertificate sizes cost) ↔
+      MultivariatePolynomialExpectedCostBound sizes cost := by
+  constructor
+  · rintro ⟨certificate⟩
+    exact ⟨certificate.nonnegative, certificate.polynomial, certificate.bound⟩
+  · rintro ⟨nonnegative, polynomial, bound⟩
+    exact ⟨⟨polynomial, nonnegative, bound⟩⟩
 
 /-- Expected polynomial resource usage restricted to inputs satisfying a
 promise.  Both nonnegativity and the polynomial bound are required only on

@@ -46,6 +46,23 @@ def IsAsymptoticallyPolynomial (cost : ℕ → ℕ) : Prop :=
     (fun n => (cost n : ℝ)) =O[atTop]
       (fun n => ((n + 1 : ℕ) : ℝ) ^ exponent)
 
+/-- Tight, user-selected Big-O target.  Unlike the polynomial yes/no checker,
+this retains shapes such as `n * log n`, `V + E`, or another explicit
+comparison function instead of replacing them by a monomial degree. -/
+def IsAsymptoticallyBoundedBy (cost bound : ℕ → ℕ) : Prop :=
+  (fun n => (cost n : ℝ)) =O[atTop] (fun n => (bound n : ℝ))
+
+/-- A global pointwise upper bound gives the corresponding exact Big-O
+statement. -/
+theorem isAsymptoticallyBoundedBy_of_le
+    {cost bound : ℕ → ℕ} (h : ∀ n, cost n ≤ bound n) :
+    IsAsymptoticallyBoundedBy cost bound := by
+  refine isBigO_iff.mpr ⟨1, ?_⟩
+  filter_upwards [] with n
+  simp only [Real.norm_eq_abs, one_mul]
+  rw [abs_of_nonneg (by positivity), abs_of_nonneg (by positivity)]
+  exact_mod_cast h n
+
 /-- The elementary coefficient/exponent definition used by the executable
 analyzer implies the standard Mathlib IsBigO formulation. -/
 theorem isAsymptoticallyPolynomial_of_isPolyBound
@@ -75,13 +92,14 @@ optimized. -/
 def polynomialDegree? : GrowthExpr → Option ℕ
   | .constant _ => some 0
   | .inputSize => some 1
-  | .add left right | .maximum left right =>
+  | .add left right | .maximum left right | .minimum left right =>
       return max (← left.polynomialDegree?) (← right.polynomialDegree?)
   | .mul left right =>
       return (← left.polynomialDegree?) + (← right.polynomialDegree?)
   | .pow base exponent =>
       return (← base.polynomialDegree?) * exponent
-  | .logarithm _ argument => argument.polynomialDegree?
+  | .subtract left _ | .divide left _ | .logarithm _ left |
+      .squareRoot left => left.polynomialDegree?
   | .exponential | .factorial | .unknown => none
 
 /-- Human-readable rendering of the expression extracted from an algorithm.
@@ -93,7 +111,12 @@ def render : GrowthExpr → String
   | .mul left right => s!"({left.render} * {right.render})"
   | .pow base exponent => s!"({base.render} ^ {exponent})"
   | .maximum left right => s!"max({left.render}, {right.render})"
+  | .minimum left right => s!"min({left.render}, {right.render})"
+  | .subtract left right => s!"({left.render} - {right.render})"
+  | .divide numerator denominator =>
+      s!"({numerator.render} / {denominator.render})"
   | .logarithm base argument => s!"log_{base}({argument.render})"
+  | .squareRoot argument => s!"sqrt({argument.render})"
   | .exponential => "2^n"
   | .factorial => "n!"
   | .unknown => "unknown"
@@ -130,7 +153,17 @@ theorem polynomialDegree?_isSome_iff (expression : GrowthExpr) :
       cases hleft : left.polynomialDegree? <;>
         cases hright : right.polynomialDegree? <;>
           simp_all [polynomialDegree?, isPolynomial]
+  | minimum left right leftIH rightIH =>
+      cases hleft : left.polynomialDegree? <;>
+        cases hright : right.polynomialDegree? <;>
+          simp_all [polynomialDegree?, isPolynomial]
+  | subtract left right leftIH rightIH =>
+      simpa [polynomialDegree?, isPolynomial] using leftIH
+  | divide numerator denominator numeratorIH denominatorIH =>
+      simpa [polynomialDegree?, isPolynomial] using numeratorIH
   | logarithm base argument argumentIH =>
+      simpa [polynomialDegree?, isPolynomial] using argumentIH
+  | squareRoot argument argumentIH =>
       simpa [polynomialDegree?, isPolynomial] using argumentIH
   | exponential => rfl
   | factorial => rfl
@@ -268,6 +301,37 @@ theorem polynomialDegree?_sound (expression : GrowthExpr) {degree : ℕ}
                     gcongr
                 _ = (leftCoefficient + rightCoefficient) *
                       (n + 1) ^ max dLeft dRight := by ring
+  | minimum left right leftIH rightIH =>
+      cases hLeftDegree : left.polynomialDegree? with
+      | none => simp [polynomialDegree?, hLeftDegree] at reported
+      | some dLeft =>
+          cases hRightDegree : right.polynomialDegree? with
+          | none =>
+              simp [polynomialDegree?, hLeftDegree, hRightDegree] at reported
+          | some dRight =>
+              simp [polynomialDegree?, hLeftDegree, hRightDegree] at reported
+              subst degree
+              obtain ⟨leftCoefficient, leftBound⟩ :=
+                leftIH hLeftDegree
+              refine ⟨leftCoefficient, fun n => ?_⟩
+              have baseOne : 1 ≤ n + 1 := by omega
+              calc
+                (GrowthExpr.minimum left right).eval n
+                    = min (left.eval n) (right.eval n) := rfl
+                _ ≤ left.eval n := min_le_left _ _
+                _ ≤ leftCoefficient * (n + 1) ^ dLeft := leftBound n
+                _ ≤ leftCoefficient * (n + 1) ^ max dLeft dRight := by
+                    gcongr
+                    exact le_max_left _ _
+  | subtract left right leftIH rightIH =>
+      obtain ⟨coefficient, leftBound⟩ := leftIH reported
+      refine ⟨coefficient, fun n => ?_⟩
+      exact (Nat.sub_le (left.eval n) (right.eval n)).trans (leftBound n)
+  | divide numerator denominator numeratorIH denominatorIH =>
+      obtain ⟨coefficient, numeratorBound⟩ := numeratorIH reported
+      refine ⟨coefficient, fun n => ?_⟩
+      exact (Nat.div_le_self (numerator.eval n) (denominator.eval n)).trans
+        (numeratorBound n)
   | logarithm base argument argumentIH =>
       obtain ⟨coefficient, argumentBound⟩ := argumentIH reported
       refine ⟨coefficient, fun n => ?_⟩
@@ -276,6 +340,10 @@ theorem polynomialDegree?_sound (expression : GrowthExpr) {degree : ℕ}
             = Nat.log base (argument.eval n) := rfl
         _ ≤ argument.eval n := Nat.log_le_self _ _
         _ ≤ coefficient * (n + 1) ^ degree := argumentBound n
+  | squareRoot argument argumentIH =>
+      obtain ⟨coefficient, argumentBound⟩ := argumentIH reported
+      refine ⟨coefficient, fun n => ?_⟩
+      exact (Nat.sqrt_le_self (argument.eval n)).trans (argumentBound n)
   | exponential => simp [polynomialDegree?] at reported
   | factorial => simp [polynomialDegree?] at reported
   | unknown => simp [polynomialDegree?] at reported

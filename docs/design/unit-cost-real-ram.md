@@ -168,7 +168,8 @@ unbounded advice.
 
 `EconCSLib.OpenProblem.Util.StaticComplexity` adds a finite algorithm-shape
 language and an executable checker.  Symbolic bounds are built from constants,
-the aggregate input size, sums, products, fixed powers, maxima, and logarithms.
+the aggregate input size, sums, products, fixed powers, maxima, minima,
+truncated subtraction, natural division, logarithms, and integer square roots.
 Sequencing, conditionals, and bounded loops generate symbolic bounds for time,
 oracle queries, distribution samples, random bits, communication, and peak
 auxiliary space.
@@ -186,6 +187,49 @@ The Boolean recognition pass is executable; the extracted Mathlib polynomial
 is marked `noncomputable` because the current Mathlib polynomial algebra uses
 noncomputable instances.  This does not affect the proposition or its kernel-
 checked soundness theorem.
+
+The common textbook forms are covered compositionally rather than by a list
+of special names:
+
+- `O(n)`, `O(n^k)`, and `O(n log n)` use the size, fixed-power,
+  multiplication, and natural-logarithm rules;
+- `O(V + E)` and `O(VE)` use a genuine
+  `MvPolynomial Parameter ℕ`, retaining `V` and `E` as distinct named
+  variables;
+- nested counted loops multiply their iteration and body bounds; and
+- a fuelled while loop is accepted only when both its fuel and uniform body
+  cost are polynomially bounded.
+
+The yes/no polynomial report may deliberately return a coarse degree (for
+example, degree two is a valid polynomial majorant for `n log n`).
+`AsymptoticCostBound cost target` is the separate Mathlib-`IsBigO`
+interface when the tight displayed target such as `n * log n` must be
+preserved; a pointwise instrumentation theorem lifts directly to this
+Big-O statement.
+
+There are two deliberately different ways to go beyond this finite syntax.
+`PolynomialCostCertificate` carries a Mathlib `Polynomial ℕ` and a checked
+pointwise bound for an *arbitrary* natural-valued Lean function.
+`PolynomialExpectedCostCertificate` does the same for a nonnegative
+real-valued formula.  The latter is suitable for exact expectations and
+formulae involving logarithms, roots, integrals, trigonometric functions, or
+user-defined analytic operations: the author proves a pointwise polynomial
+majorant, possibly by first bounding the real formula by a certified natural
+counter.  Existence of either certificate is proved equivalent to the
+corresponding semantic polynomial-bound predicate.  On natural input sizes,
+`polynomialExpectedCostBound_iff_isRealAsymptoticallyPolynomial` also proves
+that this global certificate interface is exactly nonnegativity plus
+Mathlib's `IsBigO` polynomial condition: a finite exceptional prefix is
+absorbed into the coefficient.
+
+This is the widest sound extension mechanism, but it is not a complete
+automatic analytic-expression solver.  “Given by an explicit analytic
+formula” does not imply polynomial growth: for example, `exp n` is analytic
+and superpolynomial, while bounded trigonometric factors can be polynomially
+harmless.  Moreover, sufficiently rich elementary-expression languages have
+undecidable identity/sign questions.  The framework therefore automates a
+transparent core and asks for a kernel-checked majorant outside that core,
+instead of making an unsound completeness claim.
 
 For new algorithms, `AnalyzedComputation` is the preferred intrinsic EDSL.
 Its `mapUnit`, dependent `bind`, sequencing, branching, counted iteration,
@@ -277,9 +321,12 @@ The source variable `n` is a dominating algorithmic size parameter. A runtime
 natural or runtime container contributes `n`; explicit arithmetic bounds and
 explicitly constructed standard containers are analyzed compositionally.
 For example, a fuel value `n * n` yields a quadratic loop bound, whereas
-`2 ^ n` yields an extracted exponential bound. The statuses distinguish a
-complete polynomial certificate, a complete extracted bound rejected by the
-polynomial checker, and a genuinely unresolved cost obligation. The command
+`2 ^ n` yields an extracted exponential bound. Natural subtraction, division,
+logarithm, minimum/maximum, and integer square root retain explicit sound
+upper-bound expressions rather than becoming unresolved. The statuses
+distinguish a complete polynomial certificate, a complete extracted bound
+rejected by the polynomial checker, and a genuinely unresolved cost
+obligation. The command
 `#guard_source_cost` makes all three outcomes regression-testable.
 
 Relating this convention to a particular `sizeOf : Input → ℕ` is necessarily
@@ -325,6 +372,13 @@ function.
   with explicit primitive operations and cost models (2026).
 - Lean Computer Science Library contributors, `TimeM`/`AddWriter`: writer
   monads for compositional cost semantics.
+- Mathlib contributors, `Analysis.Asymptotics` and
+  `Analysis.SpecialFunctions.Pow.Asymptotics`: general `IsBigO` algebra and
+  proved comparisons among logarithms, real powers, and exponentials.
+- Samuel Schlesinger, `complexitylib`: exact machine-resource bounds first,
+  with Mathlib-asymptotic corollaries as a separate layer.
+- D. Richardson, “Some Undecidable Problems Involving Elementary Functions
+  of a Real Variable,” *Journal of Symbolic Logic* 33 (1968), 514–520.
 - R. E. Tarjan, “Amortized Computational Complexity,” *SIAM Journal on
   Algebraic and Discrete Methods* 6 (1985), 306–318.
 - A. C.-C. Yao, “Some Complexity Questions Related to Distributive
