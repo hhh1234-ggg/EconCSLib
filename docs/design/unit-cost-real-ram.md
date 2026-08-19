@@ -9,6 +9,39 @@ This framework deliberately separates two definitions:
 It does not contain a procedure that reads arbitrary Lean source code and
 decides whether it is polynomial-time.
 
+## Module layout
+
+The implementation is split into two one-way layers under
+`EconCSLib.OpenProblem.Util.Complexity`:
+
+```text
+Definitions/
+  UnitCostRAM.lean
+  UnitCostRAMMachine.lean
+  SizeGrowth.lean
+  Interfaces.lean
+
+Support/
+  UnitCostRAM.lean
+  UnitCostRAMMachine.lean
+  SizeGrowth.lean
+  Interfaces.lean
+```
+
+`Definitions/` contains the data types, operational semantics, exact resource
+functions, and propositions that state polynomial boundedness.  It has no
+named theorem, lemma, or example, and it never imports `Support/`.
+
+`Support/` imports `Definitions/` and supplies simp lemmas, closure theorems,
+certificate constructors, traversal and loop combinators, composition
+results, and canonical-output proofs.  Thus a problem statement that only
+needs the vocabulary can import `Complexity.Definitions.Interfaces`, while a
+proof that needs the full library can import `Complexity.Support.Interfaces`.
+
+The historical modules `UnitCostRAM`, `UnitCostRAMMachine`, `SizeGrowth`, and
+`Complexity` remain as import-only facades that re-export both layers, so this
+reorganization does not change existing public declaration names.
+
 ## 1. Exact execution cost
 
 `EconCSLib.OpenProblem.Util.UnitCostRAMMachine` defines a finite
