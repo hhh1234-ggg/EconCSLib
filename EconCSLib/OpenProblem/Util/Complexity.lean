@@ -4,10 +4,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
 import EconCSLib.Foundation.Utility.Lottery
-import EconCSLib.OpenProblem.Util.AlgorithmCost
 import EconCSLib.OpenProblem.Util.SizeGrowth
-import EconCSLib.OpenProblem.Util.SourceCost
-import EconCSLib.OpenProblem.Util.StaticComplexity
 import EconCSLib.OpenProblem.Util.UnitCostRAM
 import EconCSLib.OpenProblem.Util.UnitCostRAMMachine
 import Mathlib.Data.Real.Basic
@@ -20,8 +17,7 @@ import Mathlib.MeasureTheory.Integral.Bochner.Basic
 `UnitCostRAMMachine` provides the instruction-enforced semantics.  The
 declarations in this module are problem-facing wrappers for ordinary
 functions, dependent functions, promise problems, search relations,
-structured algorithms, randomized/oracle executions, and explicit resource
-counters.
+randomized/oracle executions, and explicit resource counters.
 
 Every polynomial predicate means only that *some* natural constants
 `coefficient` and `exponent` give a uniform upper bound.  It neither exposes
@@ -211,61 +207,6 @@ structure RAMPolynomialSizeAwareImplementation
   outputSizeCertificate : RAMOutputSizeCertificate outputSize function
   polynomialTime : implementation.IsPolynomial sizeOf
   polynomialOutputSize : outputSizeCertificate.IsPolynomial sizeOf
-
-/-- Symbolic upper-bound language used by the executable checker. -/
-abbrev RAMGrowthExpr := UnitCostRAM.StaticComplexity.GrowthExpr
-
-/-- Mathlib-Big-O comparison with an explicit target shape.  Use this when
-the distinction between, for example, `n log n` and a coarse quadratic
-majorant should remain visible. -/
-abbrev AsymptoticCostBound (cost bound : ℕ → ℕ) :=
-  UnitCostRAM.StaticComplexity.IsAsymptoticallyBoundedBy cost bound
-
-theorem asymptoticCostBound_of_le
-    {cost bound : ℕ → ℕ} (pointwise : ∀ n, cost n ≤ bound n) :
-    AsymptoticCostBound cost bound :=
-  UnitCostRAM.StaticComplexity.isAsymptoticallyBoundedBy_of_le pointwise
-
-/-- Execute the conservative polynomial-growth decision procedure. -/
-def decideRAMGrowthPolynomial (expression : RAMGrowthExpr) : Bool :=
-  expression.isPolynomial
-
-/-- Proof-level extraction of a concrete Mathlib polynomial majorant.  The
-Boolean decision procedure remains executable; Mathlib's polynomial algebra
-is noncomputable data in the current library. -/
-noncomputable def ramGrowthPolynomialMajorant?
-    (expression : RAMGrowthExpr) : Option (Polynomial ℕ) :=
-  expression.polynomialMajorant?
-
-theorem ramGrowthPolynomialMajorant?_sound
-    (expression : RAMGrowthExpr) {polynomial : Polynomial ℕ}
-    (reported : ramGrowthPolynomialMajorant? expression = some polynomial) :
-    ∀ inputSize, expression.eval inputSize ≤ polynomial.eval inputSize :=
-  expression.polynomialMajorant?_sound reported
-
-/-- Typed primitive language model used to extract an exact symbolic cost
-from the sequence of primitive calls selected during execution. -/
-abbrev RAMPrimitiveModel (Instruction : Type u → Type v) :=
-  UnitCostRAM.StaticComplexity.PrimitiveModel Instruction
-
-/-- Typed free program whose primitive-level symbolic cost is derived by
-traversing the program itself. -/
-abbrev RAMPrimitiveProgram (Instruction : Type u → Type v)
-    (Result : Type u) :=
-  UnitCostRAM.StaticComplexity.PrimitiveProgram Instruction Result
-
-/-- Stateful control-flow syntax with automatically analyzed sequencing,
-branches, counted loops, and fuelled while loops. -/
-abbrev RAMStructuredProgram
-    {Input : Type u} (sizeOf : Input → ℕ) (State : Input → Type v) :=
-  UnitCostRAM.StaticComplexity.StructuredProgram sizeOf State
-
-/-- Complete initialization/body/finalization wrapper for a structured
-program with a cost expression generated from its executable syntax. -/
-abbrev RAMStructuredAlgorithm
-    {Input : Type u} (sizeOf : Input → ℕ)
-    (State : Input → Type v) (Output : Input → Type w) :=
-  UnitCostRAM.StaticComplexity.StructuredAlgorithm sizeOf State Output
 
 /-! ## Two-step strict RAM interface -/
 
@@ -603,9 +544,8 @@ def PolynomialCostBound
   UnitCostRAM.IsPolyBound sizeOf cost
 
 /-- Data-carrying polynomial majorant for an arbitrary natural-valued cost
-formula.  Use this when the finite `RAMGrowthExpr` checker does not know a
-constructor for a library or user-defined function: the formula is unrestricted,
-but its pointwise polynomial majorant must be proved. -/
+formula.  The formula is unrestricted, but its pointwise polynomial majorant
+must be proved. -/
 abbrev PolynomialCostCertificate
     {Input : Type u} (sizeOf : Input → ℕ) (cost : Input → ℕ) :=
   UnitCostRAM.IsPolyBound.PolynomialMajorantCertificate sizeOf cost

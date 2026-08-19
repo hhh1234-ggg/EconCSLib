@@ -101,10 +101,8 @@ theorem iff_exists_natPolynomial {cost : Input → ℕ} :
     exact IsPolyBound.of_le (natPolynomialEval_comp polynomial) bound
 
 /-- Data-carrying form of a polynomial upper bound for an arbitrary natural-
-valued function.  Unlike the finite `GrowthExpr` checker, this certificate is
-open ended: `cost` may be any Lean function, including a formula using a
-library routine or a user-defined analytic expression.  Soundness comes from
-the pointwise `bound`, not from recognizing the syntax of that formula. -/
+valued function.  The cost may be any Lean function.  Soundness comes from
+the pointwise `bound`; no source-code recognition procedure is involved. -/
 structure PolynomialMajorantCertificate
     (sizeOf : Input → ℕ) (cost : Input → ℕ) where
   polynomial : Polynomial ℕ

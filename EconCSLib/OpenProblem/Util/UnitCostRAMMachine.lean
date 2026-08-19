@@ -4,7 +4,6 @@ Released under Apache 2.0 license as described in the file LICENSE.
 -/
 
 import EconCSLib.OpenProblem.Util.UnitCostRAM
-import Mathlib.Algebra.Polynomial.Eval.Defs
 
 /-!
 # An instruction-level unit-cost real-RAM
@@ -499,9 +498,10 @@ from hiding the mathematical computation in a witness-specific decoder.
 The API is deliberately split into two layers.  A
 `FixedEncodingRAMImplementation` first identifies the exact execution and its
 operation-count function.  The separate predicate
-`FixedEncodingRAMImplementation.IsPolynomialTime` then asks for a Mathlib
-polynomial majorant.  `StrictRAMComputableInPolyTime` below bundles both layers
-for concise use in problem statements.
+`FixedEncodingRAMImplementation.IsPolynomialTime` then asks for constants
+`c, k : ℕ` giving the bound `c * (inputSize + 1)^k`.
+`StrictRAMComputableInPolyTime` below bundles both layers for concise use in
+problem statements.
 -/
 
 /-- Step 1: a finite closed RAM program computing a mathematical function
@@ -573,9 +573,7 @@ majorant in the length of the fixed input encoding. -/
 def IsPolynomialTime
     (implementation : FixedEncodingRAMImplementation
       inputEncoding outputEncoding function) : Prop :=
-  ∃ time : Polynomial ℕ, ∀ input,
-    implementation.operationCount input ≤
-      time.eval (inputEncoding.size input)
+  IsPolyBound inputEncoding.size implementation.operationCount
 
 /-- Generic step-2 predicate for any natural-valued statistic extracted from
 the same execution.  It covers time, oracle calls, samples, random bits,
@@ -585,9 +583,8 @@ def HasPolynomialResource
     (implementation : FixedEncodingRAMImplementation
       inputEncoding outputEncoding function)
     (resource : Input → ProfiledCost ExecutionResult → ℕ) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input,
-    resource input (implementation.execution input) ≤
-      bound.eval (inputEncoding.size input)
+  IsPolyBound inputEncoding.size fun input =>
+    resource input (implementation.execution input)
 
 /-- Step 2 for a named standard resource.  Unlike `HasPolynomialResource`,
 this predicate cannot choose an arbitrary execution inspector: it bounds one
@@ -596,9 +593,8 @@ def HasPolynomialStandardResource
     (implementation : FixedEncodingRAMImplementation
       inputEncoding outputEncoding function)
     (resource : ProfiledCost.StandardResource) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input,
-    implementation.standardResourceCount resource input ≤
-      bound.eval (inputEncoding.size input)
+  IsPolyBound inputEncoding.size fun input =>
+    implementation.standardResourceCount resource input
 
 theorem isPolynomialTime_iff_stepsResource
     (implementation : FixedEncodingRAMImplementation
@@ -635,7 +631,8 @@ structure StrictRAMComputableInPolyTime
     (function : (input : Input) → Output input) where
   program : Program Empty
   fuel : Input → ℕ
-  time : Polynomial ℕ
+  coefficient : ℕ
+  exponent : ℕ
   correct : ∀ input,
     ∃ finalState,
       (run (closedEnvironment fun _ => false) program (fuel input)
@@ -645,7 +642,7 @@ structure StrictRAMComputableInPolyTime
     ProfiledCost.steps
         (run (closedEnvironment fun _ => false) program (fuel input)
           (inputEncoding.encode input)) ≤
-      time.eval (inputEncoding.size input)
+      coefficient * (inputEncoding.size input + 1) ^ exponent
 
 namespace StrictRAMComputableInPolyTime
 
@@ -668,7 +665,7 @@ theorem toImplementation_isPolynomialTime
     (certificate : StrictRAMComputableInPolyTime
       inputEncoding outputEncoding function) :
     certificate.toImplementation.IsPolynomialTime :=
-  ⟨certificate.time, certificate.time_bound⟩
+  ⟨certificate.coefficient, certificate.exponent, certificate.time_bound⟩
 
 end StrictRAMComputableInPolyTime
 
@@ -688,11 +685,12 @@ theorem nonempty_strictRAMComputableInPolyTime_iff
   · rintro ⟨certificate⟩
     exact ⟨certificate.toImplementation,
       certificate.toImplementation_isPolynomialTime⟩
-  · rintro ⟨implementation, time, timeBound⟩
+  · rintro ⟨implementation, coefficient, exponent, timeBound⟩
     exact ⟨{
       program := implementation.program
       fuel := implementation.fuel
-      time := time
+      coefficient := coefficient
+      exponent := exponent
       correct := implementation.correct
       time_bound := timeBound }⟩
 
@@ -776,9 +774,7 @@ choice. -/
 def IsPolynomialTime
     (implementation : FixedEnvironmentRAMImplementation inputEncoding
       outputEncoding ExternalOperation environment function) : Prop :=
-  ∃ time : Polynomial ℕ, ∀ input choice,
-    implementation.operationCount input choice ≤
-      time.eval (inputEncoding.size input)
+  IsUniformPolyBound inputEncoding.size implementation.operationCount
 
 /-- Uniform polynomial bound for an arbitrary statistic of the exact chosen
 execution. -/
@@ -787,9 +783,8 @@ def HasPolynomialResource
       outputEncoding ExternalOperation environment function)
     (resource : (input : Input) → Choice input →
       ProfiledCost ExecutionResult → ℕ) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input choice,
-    resource input choice (implementation.execution input choice) ≤
-      bound.eval (inputEncoding.size input)
+  IsUniformPolyBound inputEncoding.size fun input choice =>
+    resource input choice (implementation.execution input choice)
 
 /-- Uniform polynomial bound for one standard interpreter-generated
 resource.  This is the preferred generic resource predicate for
@@ -798,9 +793,8 @@ def HasPolynomialStandardResource
     (implementation : FixedEnvironmentRAMImplementation inputEncoding
       outputEncoding ExternalOperation environment function)
     (resource : ProfiledCost.StandardResource) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input choice,
-    implementation.standardResourceCount resource input choice ≤
-      bound.eval (inputEncoding.size input)
+  IsUniformPolyBound inputEncoding.size fun input choice =>
+    implementation.standardResourceCount resource input choice
 
 theorem isPolynomialTime_iff_stepsResource
     (implementation : FixedEnvironmentRAMImplementation inputEncoding
@@ -843,7 +837,8 @@ structure StrictRAMComputableInPolyTimeWithFixedEnvironment
   choice_nonempty : ∀ input, Nonempty (Choice input)
   program : Program ExternalOperation
   fuel : (input : Input) → Choice input → ℕ
-  time : Polynomial ℕ
+  coefficient : ℕ
+  exponent : ℕ
   correct : ∀ input choice,
     ∃ finalState,
       (run (environment input choice) program (fuel input choice)
@@ -855,7 +850,7 @@ structure StrictRAMComputableInPolyTimeWithFixedEnvironment
     ProfiledCost.steps
         (run (environment input choice) program (fuel input choice)
           (inputEncoding.encode input)) ≤
-      time.eval (inputEncoding.size input)
+      coefficient * (inputEncoding.size input + 1) ^ exponent
 
 /-- Step-1 implementation for a promise search problem.  The interpreter
 chooses an encoded solution, while `correct` connects that exact output to the
@@ -922,26 +917,22 @@ def standardResourceCount
 def IsPolynomialTimeOn
     (implementation : FixedEncodingRAMSearchImplementation
       inputEncoding outputEncoding valid solution) : Prop :=
-  ∃ time : Polynomial ℕ, ∀ input, valid input →
-    implementation.operationCount input ≤
-      time.eval (inputEncoding.size input)
+  IsPolyBoundOn valid inputEncoding.size implementation.operationCount
 
 def HasPolynomialResourceOn
     (implementation : FixedEncodingRAMSearchImplementation
       inputEncoding outputEncoding valid solution)
     (resource : Input → ProfiledCost ExecutionResult → ℕ) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input, valid input →
-    resource input (implementation.execution input) ≤
-      bound.eval (inputEncoding.size input)
+  IsPolyBoundOn valid inputEncoding.size fun input =>
+    resource input (implementation.execution input)
 
 /-- Promise-restricted polynomial bound for one named standard resource. -/
 def HasPolynomialStandardResourceOn
     (implementation : FixedEncodingRAMSearchImplementation
       inputEncoding outputEncoding valid solution)
     (resource : ProfiledCost.StandardResource) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input, valid input →
-    implementation.standardResourceCount resource input ≤
-      bound.eval (inputEncoding.size input)
+  IsPolyBoundOn valid inputEncoding.size fun input =>
+    implementation.standardResourceCount resource input
 
 theorem isPolynomialTimeOn_iff_stepsResource
     (implementation : FixedEncodingRAMSearchImplementation
@@ -974,7 +965,8 @@ structure StrictRAMSearchableInPolyTime
     (solution : (input : Input) → Output input → Prop) where
   program : Program Empty
   fuel : Input → ℕ
-  time : Polynomial ℕ
+  coefficient : ℕ
+  exponent : ℕ
   correct : ∀ input, valid input →
     ∃ output finalState,
       (run (closedEnvironment fun _ => false) program (fuel input)
@@ -985,7 +977,7 @@ structure StrictRAMSearchableInPolyTime
     ProfiledCost.steps
         (run (closedEnvironment fun _ => false) program (fuel input)
           (inputEncoding.encode input)) ≤
-      time.eval (inputEncoding.size input)
+      coefficient * (inputEncoding.size input + 1) ^ exponent
 
 namespace StrictRAMSearchableInPolyTime
 
@@ -1008,7 +1000,7 @@ theorem toImplementation_isPolynomialTimeOn
     (certificate : StrictRAMSearchableInPolyTime
       inputEncoding outputEncoding valid solution) :
     certificate.toImplementation.IsPolynomialTimeOn :=
-  ⟨certificate.time, certificate.time_bound⟩
+  ⟨certificate.coefficient, certificate.exponent, certificate.time_bound⟩
 
 end StrictRAMSearchableInPolyTime
 
@@ -1027,11 +1019,12 @@ theorem nonempty_strictRAMSearchableInPolyTime_iff
   · rintro ⟨certificate⟩
     exact ⟨certificate.toImplementation,
       certificate.toImplementation_isPolynomialTimeOn⟩
-  · rintro ⟨implementation, time, timeBound⟩
+  · rintro ⟨implementation, coefficient, exponent, timeBound⟩
     exact ⟨{
       program := implementation.program
       fuel := implementation.fuel
-      time := time
+      coefficient := coefficient
+      exponent := exponent
       correct := implementation.correct
       time_bound := timeBound }⟩
 
@@ -1069,7 +1062,7 @@ theorem toImplementation_isPolynomialTime
     (certificate : StrictRAMComputableInPolyTimeWithFixedEnvironment
       inputEncoding outputEncoding ExternalOperation environment function) :
     certificate.toImplementation.IsPolynomialTime :=
-  ⟨certificate.time, certificate.time_bound⟩
+  ⟨certificate.coefficient, certificate.exponent, certificate.time_bound⟩
 
 def execution
     {Input : Type u} {Choice : Input → Type v}
@@ -1099,9 +1092,8 @@ def HasPolynomialQueries
       Output input choice}
     (certificate : StrictRAMComputableInPolyTimeWithFixedEnvironment
       inputEncoding outputEncoding ExternalOperation environment function) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input choice,
-    ProfiledCost.oracleQueries (certificate.execution input choice) ≤
-      bound.eval (inputEncoding.size input)
+  IsUniformPolyBound inputEncoding.size fun input choice =>
+    ProfiledCost.oracleQueries (certificate.execution input choice)
 
 def UsesPolynomialRandomBits
     {Input : Type u} {Choice : Input → Type v}
@@ -1115,9 +1107,8 @@ def UsesPolynomialRandomBits
       Output input choice}
     (certificate : StrictRAMComputableInPolyTimeWithFixedEnvironment
       inputEncoding outputEncoding ExternalOperation environment function) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input choice,
-    ProfiledCost.randomBits (certificate.execution input choice) ≤
-      bound.eval (inputEncoding.size input)
+  IsUniformPolyBound inputEncoding.size fun input choice =>
+    ProfiledCost.randomBits (certificate.execution input choice)
 
 def UsesPolynomialSamples
     {Input : Type u} {Choice : Input → Type v}
@@ -1131,9 +1122,8 @@ def UsesPolynomialSamples
       Output input choice}
     (certificate : StrictRAMComputableInPolyTimeWithFixedEnvironment
       inputEncoding outputEncoding ExternalOperation environment function) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input choice,
-    ProfiledCost.distributionSamples (certificate.execution input choice) ≤
-      bound.eval (inputEncoding.size input)
+  IsUniformPolyBound inputEncoding.size fun input choice =>
+    ProfiledCost.distributionSamples (certificate.execution input choice)
 
 def UsesPolynomialSpace
     {Input : Type u} {Choice : Input → Type v}
@@ -1147,10 +1137,9 @@ def UsesPolynomialSpace
       Output input choice}
     (certificate : StrictRAMComputableInPolyTimeWithFixedEnvironment
       inputEncoding outputEncoding ExternalOperation environment function) : Prop :=
-  ∃ bound : Polynomial ℕ, ∀ input choice,
+  IsUniformPolyBound inputEncoding.size fun input choice =>
     certificate.program.registerCount + inputEncoding.size input +
-        ProfiledCost.peakCells (certificate.execution input choice) ≤
-      bound.eval (inputEncoding.size input)
+      ProfiledCost.peakCells (certificate.execution input choice)
 
 end StrictRAMComputableInPolyTimeWithFixedEnvironment
 
@@ -1173,12 +1162,13 @@ theorem nonempty_strictRAMComputableInPolyTimeWithFixedEnvironment_iff
   · rintro ⟨certificate⟩
     exact ⟨certificate.toImplementation,
       certificate.toImplementation_isPolynomialTime⟩
-  · rintro ⟨implementation, time, timeBound⟩
+  · rintro ⟨implementation, coefficient, exponent, timeBound⟩
     exact ⟨{
       choice_nonempty := implementation.choice_nonempty
       program := implementation.program
       fuel := implementation.fuel
-      time := time
+      coefficient := coefficient
+      exponent := exponent
       correct := implementation.correct
       time_bound := timeBound }⟩
 
