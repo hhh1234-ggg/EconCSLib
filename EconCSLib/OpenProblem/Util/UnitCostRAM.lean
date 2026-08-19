@@ -632,6 +632,78 @@ bit. -/
 def communicatedBits (run : ProfiledCost α) : ℕ := communicationUnits run
 def peakCells (run : ProfiledCost α) : ℕ := Int.toNat run.cost.2.peak
 
+/-- The standard resources extracted from one concrete instrumented run.
+
+This structure is the output of the *counting* stage.  It contains no
+asymptotic assertion and no user-supplied resource callback: every coordinate
+is read directly from the `ProfiledCost` produced by the operational
+semantics.  `peakAuxiliaryCells` is the peak of the dynamic allocation trace;
+a strict-machine working-space bound should additionally include its fixed
+register count and encoded input length. -/
+@[ext]
+structure ExactResourceUsage where
+  localSteps : ℕ
+  oracleQueries : ℕ
+  distributionSamples : ℕ
+  randomBits : ℕ
+  communicationUnits : ℕ
+  peakAuxiliaryCells : ℕ
+  deriving DecidableEq, Repr
+
+/-- Named coordinates of `ExactResourceUsage`.  Complexity statements should
+prefer this finite vocabulary to an arbitrary function that inspects an
+execution, unless a problem genuinely introduces a new resource measure. -/
+inductive StandardResource where
+  | localSteps
+  | oracleQueries
+  | distributionSamples
+  | randomBits
+  | communicationUnits
+  | peakAuxiliaryCells
+  deriving DecidableEq, Repr
+
+/-- Read all standard resource counters from the same concrete run. -/
+def exactResourceUsage (run : ProfiledCost α) : ExactResourceUsage where
+  localSteps := steps run
+  oracleQueries := oracleQueries run
+  distributionSamples := distributionSamples run
+  randomBits := randomBits run
+  communicationUnits := communicationUnits run
+  peakAuxiliaryCells := peakCells run
+
+/-- Select one named coordinate of an exact resource-usage record. -/
+def ExactResourceUsage.get (usage : ExactResourceUsage) :
+    StandardResource → ℕ
+  | .localSteps => usage.localSteps
+  | .oracleQueries => usage.oracleQueries
+  | .distributionSamples => usage.distributionSamples
+  | .randomBits => usage.randomBits
+  | .communicationUnits => usage.communicationUnits
+  | .peakAuxiliaryCells => usage.peakAuxiliaryCells
+
+@[simp] theorem exactResourceUsage_localSteps (run : ProfiledCost α) :
+    (exactResourceUsage run).localSteps = steps run := rfl
+
+@[simp] theorem exactResourceUsage_oracleQueries (run : ProfiledCost α) :
+    (exactResourceUsage run).oracleQueries = oracleQueries run := rfl
+
+@[simp] theorem exactResourceUsage_distributionSamples
+    (run : ProfiledCost α) :
+    (exactResourceUsage run).distributionSamples =
+      distributionSamples run := rfl
+
+@[simp] theorem exactResourceUsage_randomBits (run : ProfiledCost α) :
+    (exactResourceUsage run).randomBits = randomBits run := rfl
+
+@[simp] theorem exactResourceUsage_communicationUnits
+    (run : ProfiledCost α) :
+    (exactResourceUsage run).communicationUnits =
+      communicationUnits run := rfl
+
+@[simp] theorem exactResourceUsage_peakAuxiliaryCells
+    (run : ProfiledCost α) :
+    (exactResourceUsage run).peakAuxiliaryCells = peakCells run := rfl
+
 @[simp] theorem oracleQueries_oracleCall {Query Answer : Type*}
     (oracle : Query → Answer) (query : ProfiledCost Query) :
     oracleQueries (oracleCall oracle query) = oracleQueries query + 1 := rfl

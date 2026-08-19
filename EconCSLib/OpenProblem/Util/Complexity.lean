@@ -72,6 +72,15 @@ open Filter Asymptotics
 /-- The unit-cost RAM computation wrapper used by the benchmark API. -/
 abbrev RAMCost := UnitCostRAM.Cost
 
+/-- All standard counters read from one concrete interpreter execution.
+This is the result type of the first, non-asymptotic counting stage. -/
+abbrev RAMExactResourceUsage :=
+  UnitCostRAM.ProfiledCost.ExactResourceUsage
+
+/-- Closed vocabulary of standard interpreter-generated resources. -/
+abbrev RAMStandardResource :=
+  UnitCostRAM.ProfiledCost.StandardResource
+
 /-- Trusted `CostM` instrumentation of an arbitrary dependent function.
 This is a compositional proof object, not an instruction-enforced
 polynomial-time certificate. -/
@@ -293,6 +302,47 @@ abbrev FixedEncodingRAMSearchImplementation
     (solution : (input : Input) → Output input → Prop) :=
   UnitCostRAM.FixedEncodingRAMSearchImplementation
     inputEncoding outputEncoding valid solution
+
+/-- Step 2 for one named resource of a deterministic exact execution. -/
+def FixedEncodingRAMHasPolynomialStandardResource
+    {Input : Type u} {Output : Input → Type v}
+    {inputEncoding : UnitCostRAM.Encoding Input}
+    {outputEncoding : UnitCostRAM.DependentEncoding Output}
+    {function : (input : Input) → Output input}
+    (implementation : FixedEncodingRAMImplementation
+      inputEncoding outputEncoding function)
+    (resource : RAMStandardResource) : Prop :=
+  implementation.HasPolynomialStandardResource resource
+
+/-- Choice-uniform step 2 for a named resource of the same fixed-environment
+execution used for correctness. -/
+def FixedEnvironmentRAMHasPolynomialStandardResource
+    {Input : Type u} {Choice : Input → Type v}
+    {Output : (input : Input) → Choice input → Type w}
+    {inputEncoding : UnitCostRAM.Encoding Input}
+    {outputEncoding : UnitCostRAM.ChoiceDependentEncoding Output}
+    {ExternalOperation : Type*}
+    {environment : (input : Input) →
+      Choice input → UnitCostRAM.MachineEnvironment ExternalOperation}
+    {function : (input : Input) →
+      (choice : Choice input) → Output input choice}
+    (implementation : FixedEnvironmentRAMImplementation
+      inputEncoding outputEncoding ExternalOperation environment function)
+    (resource : RAMStandardResource) : Prop :=
+  implementation.HasPolynomialStandardResource resource
+
+/-- Promise-restricted step 2 for one standard resource of a search
+execution. -/
+def FixedEncodingRAMSearchHasPolynomialStandardResource
+    {Input : Type u} {Output : Input → Type v}
+    {inputEncoding : UnitCostRAM.Encoding Input}
+    {outputEncoding : UnitCostRAM.DependentEncoding Output}
+    {valid : Input → Prop}
+    {solution : (input : Input) → Output input → Prop}
+    (implementation : FixedEncodingRAMSearchImplementation
+      inputEncoding outputEncoding valid solution)
+    (resource : RAMStandardResource) : Prop :=
+  implementation.HasPolynomialStandardResourceOn resource
 
 /-- Finite instruction-level real-RAM certificate with input/output
 representations fixed by the surrounding problem statement and an explicit
