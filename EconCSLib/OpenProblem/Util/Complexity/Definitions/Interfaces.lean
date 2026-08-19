@@ -5,6 +5,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 import EconCSLib.Foundation.Utility.Lottery
 import EconCSLib.OpenProblem.Util.Complexity.Definitions.SizeGrowth
+import EconCSLib.OpenProblem.Util.Complexity.Definitions.StrictCostCore
 import EconCSLib.OpenProblem.Util.Complexity.Definitions.UnitCostRAM
 import EconCSLib.OpenProblem.Util.Complexity.Definitions.UnitCostRAMMachine
 import Mathlib.Data.Real.Basic

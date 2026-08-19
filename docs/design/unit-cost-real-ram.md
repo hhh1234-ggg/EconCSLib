@@ -18,12 +18,14 @@ The implementation is split into two one-way layers under
 Definitions/
   UnitCostRAM.lean
   UnitCostRAMMachine.lean
+  StrictCostCore.lean
   SizeGrowth.lean
   Interfaces.lean
 
 Support/
   UnitCostRAM.lean
   UnitCostRAMMachine.lean
+  StrictCostCore.lean
   SizeGrowth.lean
   Interfaces.lean
 ```
@@ -41,6 +43,14 @@ proof that needs the full library can import `Complexity.Support.Interfaces`.
 The historical modules `UnitCostRAM`, `UnitCostRAMMachine`, `SizeGrowth`, and
 `Complexity` remain as import-only facades that re-export both layers, so this
 reorganization does not change existing public declaration names.
+
+For the shortest strict interface, import
+`Complexity.Definitions.StrictCostCore`.  It exposes only the exact
+interpreter cost, exact/upper-bound formula predicates, polynomial-formula
+boundedness, and the combined polynomial-time-via-formula proposition.
+`Complexity.Support.StrictCostCore` proves that this compact formulation is
+equivalent to the original direct polynomial bound on the machine's exact
+operation count.
 
 ## 1. Exact execution cost
 

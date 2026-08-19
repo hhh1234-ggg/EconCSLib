@@ -5,6 +5,7 @@ Released under Apache 2.0 license as described in the file LICENSE.
 
 import EconCSLib.OpenProblem.Util.Complexity.Definitions.Interfaces
 import EconCSLib.OpenProblem.Util.Complexity.Support.SizeGrowth
+import EconCSLib.OpenProblem.Util.Complexity.Support.StrictCostCore
 import EconCSLib.OpenProblem.Util.Complexity.Support.UnitCostRAMMachine
 
 /-!
