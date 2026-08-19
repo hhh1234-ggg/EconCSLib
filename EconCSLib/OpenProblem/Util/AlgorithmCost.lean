@@ -121,16 +121,42 @@ def render : GrowthExpr → String
   | .factorial => "n!"
   | .unknown => "unknown"
 
+/-- Whether the analyzer has produced a completely explicit upper-bound
+expression.  Exponential and factorial expressions are explicit even though
+they are rejected by the polynomial checker; only an unresolved `unknown`
+node prevents a meaningful displayed `O(...)` bound. -/
+def hasExplicitUpperBound : GrowthExpr → Bool
+  | .constant _ | .inputSize | .exponential | .factorial => true
+  | .add left right | .mul left right | .maximum left right |
+      .minimum left right | .subtract left right | .divide left right =>
+      left.hasExplicitUpperBound && right.hasExplicitUpperBound
+  | .pow base _ | .logarithm _ base | .squareRoot base =>
+      base.hasExplicitUpperBound
+  | .unknown => false
+
+/-- Human-readable Big-O notation for a completely extracted upper bound.
+This is deliberately presentation data rather than a theorem.  Soundness for
+an analyzed program comes from its `run_ops_le` theorem, which proves that the
+actual counter is pointwise bounded by `eval` of this same expression. -/
+def bigOUpperBound? (expression : GrowthExpr) : Option String :=
+  if expression.hasExplicitUpperBound then
+    some s!"O({expression.render})"
+  else none
+
 /-- Executable summary returned to users after the analyzer reads an
 algorithm. -/
 structure Report where
   expression : String
+  /-- Displayed asymptotic upper bound, absent exactly when the extracted
+  expression contains an unresolved node. -/
+  asymptoticUpperBound : Option String
   polynomial : Bool
   degreeUpperBound : Option ℕ
   deriving Repr, DecidableEq
 
 def report (expression : GrowthExpr) : Report where
   expression := expression.render
+  asymptoticUpperBound := expression.bigOUpperBound?
   polynomial := expression.isPolynomial
   degreeUpperBound := expression.polynomialDegree?
 

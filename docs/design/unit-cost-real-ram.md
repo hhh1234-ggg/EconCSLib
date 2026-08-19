@@ -213,6 +213,13 @@ of special names:
 
 The yes/no polynomial report may deliberately return a coarse degree (for
 example, degree two is a valid polynomial majorant for `n log n`).
+Independently of that decision, every completely extracted expression is also
+reported in the form `O(f(n))`.  Thus the same interface displays, for
+example, `O(n * log n)`, `O(2^n)`, or `O(n!)`; the last two are explicit upper
+bounds even though the polynomial checker rejects them.  An unresolved node
+produces no Big-O display.  This notation records a proved upper bound from
+the instrumented cost semantics, not a matching lower bound or a `Theta`
+classification.
 `AsymptoticCostBound cost target` is the separate Mathlib-`IsBigO`
 interface when the tight displayed target such as `n * log n` must be
 preserved; a pointwise instrumentation theorem lifts directly to this
@@ -308,9 +315,12 @@ for common list/array traversals and sorting routines. It also recognizes
 ordinary deterministic `Id`-monad `do` blocks, direct `for` loops over audited
 finite containers, and explicit-fuel pure loops from
 `EconCSLib.OpenProblem.Util.FiniteControl`. The generated report
-contains a symbolic cost expression, a polynomial degree upper bound when one
-is available, construct counts, every expanded helper and primitive, and a
-deduplicated list of unresolved obligations.
+contains a symbolic cost expression, its displayed `O(expression)` upper
+bound whenever extraction is complete, a polynomial degree upper bound when
+one is available, construct counts, every expanded helper and primitive, and
+a deduplicated list of unresolved obligations.  The Big-O field remains
+available when the expression is explicitly exponential or factorial; the
+polynomial status is reported separately.
 
 The reader treats overloaded arithmetic as one unit only on admitted scalar
 types using an audited standard scalar instance. A local replacement of

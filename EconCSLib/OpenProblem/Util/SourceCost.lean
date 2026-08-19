@@ -171,6 +171,9 @@ structure SourceReport where
   declaration : Name
   bodyAvailable : Bool
   analysis : SourceAnalysis
+  /-- Presentation of the extracted upper bound as `O(...)`.  This is `none`
+  when at least one unresolved expression node prevents a complete bound. -/
+  asymptoticUpperBound : Option String
   certifiedPolynomial : Bool
   degreeUpperBound : Option ℕ
   deriving Repr
@@ -1378,6 +1381,7 @@ meta def analyzeDeclaration (declaration : Name) : MetaM SourceReport := do
         declaration
         bodyAvailable := false
         analysis
+        asymptoticUpperBound := none
         certifiedPolynomial := false
         degreeUpperBound := none }
   | _ => match info.value? (allowOpaque := true) with
@@ -1388,6 +1392,7 @@ meta def analyzeDeclaration (declaration : Name) : MetaM SourceReport := do
         declaration
         bodyAvailable := false
         analysis
+        asymptoticUpperBound := none
         certifiedPolynomial := false
         degreeUpperBound := none }
   | some body =>
@@ -1400,6 +1405,7 @@ meta def analyzeDeclaration (declaration : Name) : MetaM SourceReport := do
         declaration
         bodyAvailable := true
         analysis
+        asymptoticUpperBound := analysis.cost.bigOUpperBound?
         certifiedPolynomial := analysis.certified
         degreeUpperBound := analysis.cost.polynomialDegree? }
 
@@ -1593,10 +1599,19 @@ elab_rules : command
         if 2000 < report.analysis.stats.expressionNodes then
           s!"<omitted: expression extracted from {report.analysis.stats.expressionNodes} source nodes; inspect the report programmatically>"
         else displayedCost.render
+      let displayedBigOText :=
+        if !report.analysis.issues.isEmpty then
+          "unavailable: unresolved cost obligations"
+        else if 2000 < report.analysis.stats.expressionNodes then
+          "O(<explicit expression omitted; inspect the report programmatically>)"
+        else
+          (displayedCost.bigOUpperBound?).getD
+            "unavailable: extracted expression contains unknown growth"
       logInfoAt token m!"source-cost report for {declaration}
 status: {status}
 body available: {report.bodyAvailable}
-cost expression: {displayedCostText}
+extracted upper-bound expression: {displayedCostText}
+asymptotic upper bound: {displayedBigOText}
 degree upper bound: {repr report.degreeUpperBound}
 statistics: {repr report.analysis.stats}
 expanded definitions: {formatNames report.analysis.expanded}
